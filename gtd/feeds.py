@@ -224,7 +224,9 @@ def sync(store: Store, get=fetch, *, dry_run: bool = False) -> list[str]:
             if e["id"] in known or not e["url"]:
                 continue
             known.add(e["id"])
-            too_old = first_time and e["published"] and e["published"] < now() - NEW_FEED_LOOKBACK
+            # on a source's first read, only recent entries count; an entry without a date is
+            # treated as old, so a new search never floods the inbox with its back catalogue
+            too_old = first_time and (not e["published"] or e["published"] < now() - NEW_FEED_LOOKBACK)
             is_short = "/shorts/" in e["url"] or (e.get("seconds") is not None and e["seconds"] < 120)
             if too_old or (cfg.get("skip_shorts", True) and is_short):
                 continue

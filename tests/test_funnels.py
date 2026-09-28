@@ -557,6 +557,7 @@ class PeopleSearchTest(unittest.TestCase):
             ("v3", "Dylan Patel in 60 seconds", "Clips", "1 day ago", "0:59", ""),
             ("v4", "Unrelated video", "Someone", "3 hours ago", "10:00", "nothing to see"),
             ("v5", "Dylan Patel 2025 interview", "Old Show", "3 weeks ago", "45:00", ""),
+            ("v7", "Dylan Patel undated", "Mystery", "", "45:00", ""),
         ]
         pages = {"html": _yt_search_page(videos)}
         get = lambda url: pages["html"] if "results?search_query=%22Dylan+Patel%22" in url else (_ for _ in ()).throw(OSError(url))
