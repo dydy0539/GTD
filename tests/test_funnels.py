@@ -573,3 +573,24 @@ class PeopleSearchTest(unittest.TestCase):
             videos.insert(0, ("v6", "Dylan Patel x Dwarkesh", "Dwarkesh Patel", "10 minutes ago", "2:01:00", ""))
             pages["html"] = _yt_search_page(videos)
             self.assertEqual(len(sync(store, get)), 1)
+
+
+class SiteTest(unittest.TestCase):
+    def test_page_embeds_items_safely(self):
+        import json as _json, re as _re
+        from gtd import site
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            store.add(adapters.from_text("Buy tennis balls", via="telegram"))
+            store.add(adapters.from_text("</script><b>x</b> high priority", via="telegram"))
+            store.add(adapters.from_url("https://youtu.be/abc", via="feed", title="The TSMC Story"))
+            html = site.page(list(store.items()))
+            self.assertTrue(html.startswith("<title>GTD In-tray</title>"))
+            self.assertEqual(html.count("</script>"), 2)  # data can't close the script tag early
+            data = _json.loads(_re.search(r'id="data">(.*?)</script>', html, _re.S).group(1))
+            self.assertEqual(len(data["items"]), 3)
+            rec = {r["title"]: r for r in data["items"]}
+            self.assertEqual(rec["Buy tennis balls"]["source"], "Telegram")
+            self.assertEqual(rec["The TSMC Story"]["source"], "YouTube & feeds")
+            self.assertEqual(rec["</script><b>x</b>"]["priority"], "high")
+            self.assertTrue(site.document([]).startswith("<!doctype html>"))

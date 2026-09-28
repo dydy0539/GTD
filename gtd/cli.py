@@ -56,7 +56,10 @@ def cmd_render(store: Store, a: argparse.Namespace) -> int:
     out = Path(a.out) if a.out else store.home
     out.mkdir(parents=True, exist_ok=True)
     (out / "INBOX.md").write_text(render.as_markdown(items), encoding="utf-8")
-    (out / "inbox.html").write_text(render.as_html(items), encoding="utf-8")
+    from . import site
+    (out / "inbox.html").write_text(site.document(items), encoding="utf-8")
+    if a.page:  # body only, for hosts that add the document skeleton (claude.ai pages)
+        Path(a.page).write_text(site.page(items), encoding="utf-8")
     print(f"Wrote {out / 'INBOX.md'} and {out / 'inbox.html'} ({len(items)} items)")
     return 0
 
@@ -184,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
 
     r = sub.add_parser("render", help="write INBOX.md and inbox.html")
     r.add_argument("-o", "--out", help="output directory (default $GTD_HOME)")
+    r.add_argument("--page", help="also write the page body (no <html> skeleton) to this file")
     r.set_defaults(fn=cmd_render)
 
     g = sub.add_parser("gmail", help="Gmail funnel").add_subparsers(dest="gcmd", required=True)
