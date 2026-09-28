@@ -197,3 +197,31 @@ class DataRepoTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnrichTest(unittest.TestCase):
+    def test_titles(self):
+        from gtd.enrich import enrich_titles
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            yt, _ = store.add(adapters.from_url("https://youtu.be/abc?si=x"))
+            page, _ = store.add(adapters.from_url("https://example.com/post"))
+            named, _ = store.add(adapters.from_url("https://example.com/other", title="My own title"))
+            broken, _ = store.add(adapters.from_url("https://down.example/x"))
+
+            def fake_get(url):
+                if "youtube.com/oembed" in url:
+                    return '{"title": "How transformers work", "author_name": "3Blue1Brown"}'
+                if "down.example" in url:
+                    raise OSError("unreachable")
+                return '<html><head><title>Fallback</title><meta property="og:title" content="Agents &amp; tools"></head>'
+
+            report = enrich_titles(store, get=fake_get)
+            self.assertEqual(store.get(yt.id).title, "How transformers work")
+            self.assertEqual(store.get(yt.id).source["author"], "3Blue1Brown")
+            self.assertEqual(store.get(page.id).title, "Agents & tools")
+            self.assertEqual(store.get(named.id).title, "My own title")
+            self.assertEqual(store.get(broken.id).title, "down.example/x")
+            self.assertEqual(sum(l.strip().startswith("✓") for l in report), 2)
+            self.assertEqual(enrich_titles(store, get=fake_get)[-1].strip()[0], "✗")  # only the broken one retried

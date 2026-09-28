@@ -8,6 +8,7 @@
   gtd show 20260928T1430
   gtd render            # writes INBOX.md and inbox.html into $GTD_HOME
   gtd gmail sync --dry-run
+  gtd enrich            # real titles for captured links
   gtd sync              # share with your other devices (private git repo)
 """
 from __future__ import annotations
@@ -78,6 +79,15 @@ def cmd_gmail_sync(store: Store, a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_enrich(store: Store, a: argparse.Namespace) -> int:
+    from .enrich import enrich_titles
+
+    report = enrich_titles(store)
+    print(f"Enriched {sum(l.lstrip().startswith('✓') for l in report)} item(s)")
+    print("\n".join(report))
+    return 0
+
+
 def cmd_init(store: Store, a: argparse.Namespace) -> int:
     written = datarepo.init(store.home)
     print(f"Initialised {store.home}: {', '.join(written) or 'nothing to do'}")
@@ -121,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
     gs.add_argument("--dry-run", action="store_true", help="show decisions, change nothing")
     gs.add_argument("--since-days", type=int, default=2, help="look back this far (default 2)")
     gs.set_defaults(fn=cmd_gmail_sync)
+
+    e = sub.add_parser("enrich", help="look up real titles for captured links")
+    e.set_defaults(fn=cmd_enrich)
 
     i = sub.add_parser("init", help="scaffold the data repo ($GTD_HOME or --home)")
     i.set_defaults(fn=cmd_init)
