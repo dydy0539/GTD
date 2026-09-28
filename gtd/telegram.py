@@ -174,7 +174,10 @@ def sync(store: Store, api: TelegramAPI, *, dry_run: bool = False) -> list[str]:
                 item, created = store.add(item, blobs=blobs)
                 text = (f"✓ Captured: {item.title}" if created
                         else f"↺ Already in your inbox: {item.title}")
-                event = event_for(item) if created else None
+                try:  # the calendar hint is a nicety; it must never break capture
+                    event = event_for(item) if created else None
+                except Exception:
+                    event = None
                 if event:
                     when_ = datetime.fromisoformat(event["start"]).strftime("%a %d %b %H:%M")
                     text += f"\n📅 {when_} · {event['location'][:60]}\nAdd to calendar: {add_link(event)}"

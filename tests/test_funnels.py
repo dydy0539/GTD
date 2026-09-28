@@ -401,6 +401,15 @@ class CalendarTest(unittest.TestCase):
         self.assertIsNone(find("call mom at 7pm", now))          # no place → not an appointment
         self.assertIsNone(find("Location: office", now))         # no time
 
+    def test_bad_timezone_setting_does_not_crash(self):
+        import os
+        from unittest import mock
+        from gtd.gcal import default_timezone
+        with mock.patch.dict(os.environ, {"TZ": "Asia/Tokyo\r\n", "GTD_TIMEZONE": ""}):
+            self.assertEqual(default_timezone(), "Asia/Tokyo")
+        with mock.patch.dict(os.environ, {"TZ": "Mars/Olympus", "GTD_TIMEZONE": ""}):
+            self.assertEqual(default_timezone(), "UTC")
+
     def test_schedule(self):
         from gtd.gcal import schedule
         with tempfile.TemporaryDirectory() as tmp:

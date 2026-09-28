@@ -23,7 +23,16 @@ DEFAULT_MINUTES = 60
 
 
 def default_timezone() -> str:
-    return os.environ.get("GTD_TIMEZONE") or os.environ.get("TZ") or "UTC"
+    """GTD_TIMEZONE or TZ, tolerating stray whitespace; an unknown zone falls back to UTC."""
+    for name in (os.environ.get("GTD_TIMEZONE"), os.environ.get("TZ")):
+        name = (name or "").strip()
+        if name:
+            try:
+                ZoneInfo(name)
+                return name
+            except (KeyError, ValueError):  # ZoneInfoNotFoundError is a KeyError
+                continue
+    return "UTC"
 
 
 def event_for(item: Item, default_tz: str | None = None) -> dict | None:
@@ -105,7 +114,11 @@ def schedule(store: Store, calendar: "GoogleCalendar | None" = None) -> list[str
         cal = item.extra.get("calendar")
         if item.via not in SELF_AUTHORED or (cal and cal.get("status") == "added"):
             continue
-        event = cal or event_for(item)
+        try:
+            event = cal or event_for(item)
+        except Exception as e:  # one odd item must not stop the rest
+            report.append(f"  ✗ 📅 {item.title[:50]}  ({type(e).__name__})")
+            continue
         if not event:
             continue
         event = {k: event[k] for k in ("summary", "location", "start", "end", "timezone", "description")}
