@@ -307,7 +307,12 @@ class TelegramTest(unittest.TestCase):
             sync(store, api)
             self.assertIn("Add to calendar: https://calendar.google.com", fake.sent[-1])
 
-            fake.updates.append(tg(10, 42, text="call the dentist"))
+            fake.updates.append(tg(11, 42, text="/follow https://www.youtube.com/@Asianometry"))
+            sync(store, api)
+            self.assertTrue(fake.sent[-1].startswith("Following"))
+            self.assertIn("@Asianometry", (store.home / "feeds.yaml").read_text())
+
+            fake.updates.append(tg(12, 42, text="call the dentist"))
             sync(store, api)
             self.assertEqual(len(list(store.items())), 6)
             self.assertTrue(fake.sent[-1].startswith("↺ Already"))
@@ -431,3 +436,91 @@ class CalendarTest(unittest.TestCase):
             self.assertEqual(len(fake.calls), 1)  # never added twice
             from gtd import render
             self.assertIn("on your calendar ✓", render.as_markdown(list(store.items())))
+
+
+YT_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns="http://www.w3.org/2005/Atom">
+ <title>Asianometry</title>
+ <entry><id>yt:video:NEW1</id><yt:videoId>NEW1</yt:videoId><title>The TSMC Story</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=NEW1"/><author><name>Asianometry</name></author>
+  <published>{recent}</published></entry>
+ <entry><id>yt:video:SHORT</id><yt:videoId>SHORT</yt:videoId><title>60s on ASML</title>
+  <link rel="alternate" href="https://www.youtube.com/shorts/SHORT"/><author><name>Asianometry</name></author>
+  <published>{recent}</published></entry>
+ <entry><id>yt:video:OLD1</id><yt:videoId>OLD1</yt:videoId><title>Old video</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=OLD1"/><author><name>Asianometry</name></author>
+  <published>2025-01-01T00:00:00+00:00</published></entry>
+</feed>"""
+
+PODCAST = """<rss version="2.0"><channel><title>Invest Like the Best</title>
+ <item><title>Ep 1</title><guid>ep1</guid><link>https://example.com/ep1</link>
+  <pubDate>{recent}</pubDate></item></channel></rss>"""
+
+CHANNEL_PAGE = '<link rel="canonical" href="https://www.youtube.com/channel/UCnrqHxkQx8fpCpBb-1XpQ4w">'
+
+
+class FeedsTest(unittest.TestCase):
+    def test_youtube_and_podcast_feeds(self):
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+        from gtd.feeds import sync
+
+        recent = datetime.now(timezone.utc) - timedelta(hours=5)
+        pages = {"yt": YT_FEED.replace("{recent}", recent.isoformat()),
+                 "pod": PODCAST.replace("{recent}", format_datetime(recent))}
+
+        def get(url):
+            if url == "https://www.youtube.com/@Asianometry":
+                return CHANNEL_PAGE
+            if "videos.xml?channel_id=UCnrqHxkQx8fpCpBb-1XpQ4w" in url:
+                return pages["yt"]
+            if url == "https://example.com/pod.rss":
+                return pages["pod"]
+            raise OSError(url)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            (store.home / "feeds.yaml").write_text(
+                'youtube: ["@Asianometry"]\nfeeds: ["https://example.com/pod.rss"]\npriority: low\ntags: [watch]\n')
+            self.assertEqual(len(sync(store, get, dry_run=True)), 2)
+            self.assertEqual(list(store.items()), [])
+
+            report = sync(store, get)
+            items = {i.title: i for i in store.items()}
+            self.assertEqual(set(items), {"The TSMC Story", "Ep 1"})  # no shorts, no back catalogue
+            video = items["The TSMC Story"]
+            self.assertEqual((video.channel, video.source["author"], video.tags), ("youtube", "Asianometry", ["watch"]))
+            self.assertEqual(video.extra["hints"]["priority"], "low")
+            self.assertEqual(sync(store, get), [])  # nothing new on the next run
+
+            pages["yt"] = pages["yt"].replace("NEW1", "NEW2").replace("The TSMC Story", "ASML deep dive")
+            self.assertEqual(len(sync(store, get)), 1)
+            self.assertIn("ASML deep dive", {i.title for i in store.items()})
+
+    def test_follow(self):
+        from gtd.feeds import follow, load_config
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            (store.home / "feeds.yaml").write_text("# my feeds\nyoutube: []\n\nfeeds: []\nskip_shorts: true\n")
+            follow(store, "https://www.youtube.com/@Asianometry")
+            follow(store, "@Stratechery")
+            follow(store, "https://example.com/pod.rss")
+            self.assertTrue(follow(store, "@Stratechery").startswith("Already"))
+            cfg = load_config(store)
+            self.assertEqual(cfg["youtube"], ["https://www.youtube.com/@Asianometry", "@Stratechery"])
+            self.assertEqual((cfg["feeds"], cfg["skip_shorts"]), (["https://example.com/pod.rss"], True))
+            self.assertIn("# my feeds", (store.home / "feeds.yaml").read_text())
+            with self.assertRaises(ValueError):
+                follow(store, "hello")
+
+    def test_import_takeout(self):
+        from gtd.feeds import import_takeout, load_config
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            csv_file = store.home / "subscriptions.csv"
+            csv_file.write_text("Channel Id,Channel Url,Channel Title\n"
+                                "UCnrqHxkQx8fpCpBb-1XpQ4w,http://www.youtube.com/channel/UCnrqHxkQx8fpCpBb-1XpQ4w,Asianometry\n"
+                                "UCxxxxxxxxxxxxxxxxxxxxx1,http://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxx1,Other\n")
+            self.assertEqual(import_takeout(store, csv_file), 2)
+            self.assertEqual(len(load_config(store)["youtube"]), 2)
+            self.assertEqual(import_takeout(store, csv_file), 0)

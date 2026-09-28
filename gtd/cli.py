@@ -9,6 +9,7 @@
   gtd render            # writes INBOX.md and inbox.html into $GTD_HOME
   gtd gmail sync --dry-run
   gtd telegram sync
+  gtd feeds sync        # new YouTube videos / podcast episodes / blog posts
   gtd enrich            # real titles for captured links
   gtd sync              # share with your other devices (private git repo)
 """
@@ -89,6 +90,22 @@ def cmd_telegram_sync(store: Store, a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_feeds_sync(store: Store, a: argparse.Namespace) -> int:
+    from .feeds import sync
+
+    report = sync(store, dry_run=a.dry_run)
+    print(f"Feeds{' (dry run — nothing saved)' if a.dry_run else ''}: {len(report)} new")
+    print("\n".join(report))
+    return 0
+
+
+def cmd_feeds_import(store: Store, a: argparse.Namespace) -> int:
+    from .feeds import import_takeout
+
+    print(f"Added {import_takeout(store, Path(a.csv))} channel(s) to {store.home / 'feeds.yaml'}")
+    return 0
+
+
 def cmd_enrich(store: Store, a: argparse.Namespace) -> int:
     from .enrich import backfill_priority, enrich_images, enrich_titles
     from .gcal import GoogleCalendar, schedule
@@ -148,6 +165,14 @@ def main(argv: list[str] | None = None) -> int:
     ts = t.add_parser("sync", help="capture new messages sent to your bot")
     ts.add_argument("--dry-run", action="store_true", help="show what would be captured")
     ts.set_defaults(fn=cmd_telegram_sync)
+
+    f = sub.add_parser("feeds", help="YouTube channels, podcasts, blogs").add_subparsers(dest="fcmd", required=True)
+    fs = f.add_parser("sync", help="capture new entries from feeds.yaml")
+    fs.add_argument("--dry-run", action="store_true")
+    fs.set_defaults(fn=cmd_feeds_sync)
+    fi = f.add_parser("import", help="add channels from Google Takeout subscriptions.csv")
+    fi.add_argument("csv")
+    fi.set_defaults(fn=cmd_feeds_import)
 
     e = sub.add_parser("enrich", help="link titles, screenshots, priority markers, calendar events")
     e.set_defaults(fn=cmd_enrich)

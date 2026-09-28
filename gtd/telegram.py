@@ -153,9 +153,21 @@ def sync(store: Store, api: TelegramAPI, *, dry_run: bool = False) -> list[str]:
             if not dry_run:
                 api.reply(msg["chat"]["id"], "Sorry, this is a private inbox.")
             continue
-        if (msg.get("text") or "").startswith("/"):
+        text_in = (msg.get("text") or "").strip()
+        if text_in.lower().startswith("/follow"):
+            ref = text_in[len("/follow"):].strip().split()[0] if text_in[len("/follow"):].strip() else ""
             if not dry_run:
-                api.reply(msg["chat"]["id"], HELP)
+                from .feeds import follow
+                try:
+                    answer = follow(store, ref) if ref else "Usage: /follow @channel (or a channel / feed link)"
+                except ValueError as e:
+                    answer = str(e)
+                api.reply(msg["chat"]["id"], answer)
+            report.append(f"  follow   {ref}")
+            continue
+        if text_in.startswith("/"):
+            if not dry_run:
+                api.reply(msg["chat"]["id"], HELP + "\n\n/follow @channel — follow a YouTube channel or feed")
             continue
         for item, blobs in message_to_items(msg, api):
             if not dry_run:

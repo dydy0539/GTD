@@ -20,6 +20,7 @@ SCAFFOLD = {
     "capture.yml": ".github/workflows/capture.yml",
     "README.md": "README.md",
     "CLAUDE.md": "CLAUDE.md",
+    "feeds.yaml": "feeds.yaml",
 }
 
 

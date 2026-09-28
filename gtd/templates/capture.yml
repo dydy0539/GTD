@@ -41,6 +41,9 @@ jobs:
       - name: Pull Telegram
         if: always() && env.TELEGRAM_BOT_TOKEN != ''
         run: gtd telegram sync
+      - name: Pull YouTube channels, podcasts, blogs
+        if: always() && hashFiles('feeds.yaml') != ''
+        run: gtd feeds sync
       - name: Titles, screenshots, priority markers, calendar events
         if: always()
         continue-on-error: true

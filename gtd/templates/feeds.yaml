@@ -1,0 +1,17 @@
+# YouTube channels, podcasts and blogs you follow. New entries land in the inbox.
+# Test with:  gtd feeds sync --dry-run
+#
+# youtube: a handle (@name), a channel URL, or a channel id (UC…).
+#   Whole subscription list: Google Takeout → YouTube → subscriptions.csv,
+#   then `gtd feeds import subscriptions.csv` (or send the file to Claude).
+# feeds: any RSS/Atom URL (podcast feed, blog feed).
+
+youtube: []
+#  - "@Stratechery"
+
+feeds: []
+#  - https://example.com/podcast.rss
+
+skip_shorts: true
+priority: low          # hint shown in the inbox (low = ↓)
+tags: [watch]
