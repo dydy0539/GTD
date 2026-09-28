@@ -225,3 +225,72 @@ class EnrichTest(unittest.TestCase):
             self.assertEqual(store.get(broken.id).title, "down.example/x")
             self.assertEqual(sum(l.strip().startswith("✓") for l in report), 2)
             self.assertEqual(enrich_titles(store, get=fake_get)[-1].strip()[0], "✗")  # only the broken one retried
+
+
+class FakeTelegram:
+    """Stands in for api.telegram.org."""
+
+    def __init__(self, updates, files=None):
+        self.updates, self.files, self.sent, self.confirmed = updates, files or {}, [], 0
+
+    def __call__(self, url, body):
+        import json as _json
+        method = url.rsplit("/", 1)[-1]
+        if "/file/" in url:
+            return self.files[method]
+        params = _json.loads(body)
+        if method == "getUpdates":
+            self.confirmed = max(self.confirmed, params["offset"])
+            result = [u for u in self.updates if u["update_id"] >= params["offset"]]
+        elif method == "getFile":
+            result = {"file_path": params["file_id"]}
+        else:
+            self.sent.append(params["text"])
+            result = {}
+        return _json.dumps({"ok": True, "result": result}).encode()
+
+
+def tg(update_id, user, **msg):
+    return {"update_id": update_id, "message": {
+        "message_id": update_id, "date": 1790000000, "chat": {"id": user, "type": "private"},
+        "from": {"id": user}, **msg}}
+
+
+class TelegramTest(unittest.TestCase):
+    def test_sync(self):
+        from gtd.telegram import TelegramAPI, sync
+
+        fake = FakeTelegram([
+            tg(1, 42, text="/start"),
+            tg(2, 42, text="call the dentist"),
+            tg(3, 42, text="for Q4 https://youtu.be/abc"),
+            tg(4, 42, photo=[{"file_id": "small", "file_size": 1}, {"file_id": "big", "file_size": 9}],
+               caption="flight options"),
+            tg(5, 42, voice={"file_id": "v1", "mime_type": "audio/ogg"}),
+            tg(6, 42, text="see you at 7", forward_origin={
+                "type": "user", "sender_user": {"first_name": "Sam", "last_name": "Lee"}}),
+            tg(7, 99, text="let me in"),
+        ], files={"big": b"jpeg", "v1": b"ogg"})
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            api = TelegramAPI("TOKEN", http=fake)
+            self.assertEqual(len(sync(store, api, dry_run=True)), 6)
+            self.assertEqual(list(store.items()), [])
+
+            report = sync(store, api)
+            items = {i.channel: i for i in store.items()}
+            self.assertEqual(set(items), {"text", "youtube", "image", "audio", "message"})
+            self.assertEqual(items["youtube"].note, "for Q4")
+            self.assertEqual(items["image"].title, "flight options")
+            self.assertTrue((store.path_of(items["image"].id) / "attachments" / "telegram-4.jpg").exists())
+            self.assertEqual(items["message"].source["forwarded_from"], "Sam Lee")
+            self.assertEqual(items["message"].title, "Sam Lee: see you at 7")
+            self.assertIn("refused", report[-1])
+            self.assertIn("Sorry, this is a private inbox.", fake.sent)
+            self.assertEqual(sum(t.startswith("✓ Captured") for t in fake.sent), 5)
+            self.assertEqual(fake.confirmed, 8)
+
+            fake.updates.append(tg(8, 42, text="call the dentist"))
+            sync(store, api)
+            self.assertEqual(len(list(store.items())), 5)
+            self.assertTrue(fake.sent[-1].startswith("↺ Already"))

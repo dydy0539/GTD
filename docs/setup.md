@@ -68,3 +68,15 @@ gtd capture https://example.com/article -n "for the Q4 doc"
 gtd ls           # what's in the inbox
 gtd sync         # share with the other devices (also pulls in theirs)
 ```
+
+## 5. Telegram bot (optional second funnel)
+
+1. In Telegram, open a chat with **@BotFather** (the one with the blue check) → send `/newbot`.
+2. Give it a display name (e.g. `My GTD Inbox`) and a username ending in `bot`
+   (e.g. `yourname_gtd_bot`). BotFather replies with a **token** like `123456:ABC-…`.
+3. In the `gtd-inbox` repo → Settings → Secrets and variables → Actions →
+   New repository secret: **Name** `TELEGRAM_BOT_TOKEN`, **Secret** the token.
+4. Open your new bot in Telegram (link in BotFather's reply) → **Start** → send a test message.
+   The first person to message the bot becomes its owner; nobody else can use it.
+5. Pin the chat. From now on: **Share → Telegram → your bot**, or forward any message to it.
+   It replies "✓ Captured" when the next sync picks it up (within 30 minutes).

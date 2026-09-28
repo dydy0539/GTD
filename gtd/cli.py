@@ -8,6 +8,7 @@
   gtd show 20260928T1430
   gtd render            # writes INBOX.md and inbox.html into $GTD_HOME
   gtd gmail sync --dry-run
+  gtd telegram sync
   gtd enrich            # real titles for captured links
   gtd sync              # share with your other devices (private git repo)
 """
@@ -79,6 +80,15 @@ def cmd_gmail_sync(store: Store, a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_telegram_sync(store: Store, a: argparse.Namespace) -> int:
+    from .telegram import TelegramAPI, sync, token_from_env
+
+    report = sync(store, TelegramAPI(token_from_env()), dry_run=a.dry_run)
+    print(f"Telegram{' (dry run — nothing saved)' if a.dry_run else ''}: {len(report)} message(s)")
+    print("\n".join(report))
+    return 0
+
+
 def cmd_enrich(store: Store, a: argparse.Namespace) -> int:
     from .enrich import enrich_titles
 
@@ -131,6 +141,11 @@ def main(argv: list[str] | None = None) -> int:
     gs.add_argument("--dry-run", action="store_true", help="show decisions, change nothing")
     gs.add_argument("--since-days", type=int, default=2, help="look back this far (default 2)")
     gs.set_defaults(fn=cmd_gmail_sync)
+
+    t = sub.add_parser("telegram", help="Telegram bot funnel").add_subparsers(dest="tcmd", required=True)
+    ts = t.add_parser("sync", help="capture new messages sent to your bot")
+    ts.add_argument("--dry-run", action="store_true", help="show what would be captured")
+    ts.set_defaults(fn=cmd_telegram_sync)
 
     e = sub.add_parser("enrich", help="look up real titles for captured links")
     e.set_defaults(fn=cmd_enrich)
