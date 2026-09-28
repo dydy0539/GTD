@@ -20,6 +20,7 @@ whole back catalogue. Seen entries are remembered in state/feeds.json.
 from __future__ import annotations
 
 import csv
+import html
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -43,12 +44,23 @@ def youtube_feed_url(channel_id: str) -> str:
     return f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 
 
+def _api_key() -> str:
+    import os
+    return os.environ.get("YOUTUBE_API_KEY", "").strip()
+
+
 def resolve_channel(ref: str, get=fetch) -> str:
     """'@handle', a channel URL or a UC… id → channel id."""
     m = CHANNEL_ID.fullmatch(ref.strip()) or re.search(r"/channel/(UC[\w-]{22})", ref)
     if m:
         return m.group(1) if m.re.groups else m.group(0)
     handle = ref.strip().rstrip("/").split("/")[-1]
+    if _api_key():
+        from urllib.parse import quote
+        data = json.loads(get("https://www.googleapis.com/youtube/v3/channels?part=id&forHandle="
+                              f"{quote(handle if handle.startswith('@') else '@' + handle)}&key={_api_key()}"))
+        if data.get("items"):
+            return data["items"][0]["id"]
     page = get(f"https://www.youtube.com/{handle if handle.startswith('@') else '@' + handle}")
     m = (re.search(r'<link rel="canonical" href="https://www\.youtube\.com/channel/(UC[\w-]{22})"', page)
          or re.search(r'"(?:externalId|channelId)":"(UC[\w-]{22})"', page))
@@ -129,10 +141,26 @@ def _video_renderers(node):
 def youtube_search(name: str, get=fetch) -> tuple[str, list[dict]]:
     """Newest YouTube videos whose title or description mentions `name`."""
     from urllib.parse import quote_plus
+    if _api_key():  # official API: reliable, 100 of the 10,000 free daily units per search
+        after = (now() - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        data = json.loads(get("https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&order=date"
+                              f"&maxResults=25&publishedAfter={after}&q={quote_plus(chr(34) + name + chr(34))}"
+                              f"&key={_api_key()}"))
+        entries = []
+        for it in data.get("items", []):
+            sn = it["snippet"]
+            if name.lower() not in f"{sn.get('title', '')} {sn.get('description', '')}".lower():
+                continue
+            entries.append({"id": it["id"]["videoId"], "title": html.unescape(sn["title"]),
+                            "url": f"https://www.youtube.com/watch?v={it['id']['videoId']}",
+                            "published": _dt(sn.get("publishedAt")), "author": sn.get("channelTitle", "YouTube"),
+                            "seconds": None})
+        return f"YouTube: {name}", entries
     page = get(SEARCH_URL.format(q=quote_plus(f'"{name}"')))
     m = re.search(r"var ytInitialData\s*=\s*(\{.*?\});\s*</script>", page, re.S)
     if not m:
-        raise ValueError("couldn't read YouTube search results")
+        raise ValueError("YouTube didn't return search results to the server; "
+                         "add a free YOUTUBE_API_KEY secret to use the official API instead")
     data = json.loads(m.group(1))
     entries, needle = [], name.lower()
     for v in _video_renderers(data):
@@ -190,6 +218,8 @@ def sync(store: Store, get=fetch, *, dry_run: bool = False) -> list[str]:
             continue
         first_time = url not in seen
         known = set(seen.get(url, []))
+        if first_time:
+            report.append(f"  + now following {feed_title or url} ({len(entries)} recent entries seen)")
         for e in entries:
             if e["id"] in known or not e["url"]:
                 continue

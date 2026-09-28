@@ -24,8 +24,16 @@ def placeholder_title(canonical_url: str) -> str:
     return f"{parts.netloc}{parts.path}"[:80]
 
 
-def fetch(url: str, timeout: float = 10, limit: int = 512_000) -> str:
-    req = Request(url, headers={"User-Agent": UA, "Accept-Language": "en"})
+BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
+
+
+def fetch(url: str, timeout: float = 10, limit: int = 2_000_000) -> str:
+    headers = {"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"}
+    if "youtube.com/" in url and "/feeds/" not in url and "/oembed" not in url:
+        # YouTube serves a stripped page or a consent wall to unknown clients
+        headers.update({"User-Agent": BROWSER_UA, "Cookie": "CONSENT=YES+cb; SOCS=CAI"})
+    req = Request(url, headers=headers)
     with urlopen(req, timeout=timeout) as resp:
         return resp.read(limit).decode(resp.headers.get_content_charset() or "utf-8", "replace")
 

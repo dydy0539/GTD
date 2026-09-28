@@ -491,7 +491,7 @@ class FeedsTest(unittest.TestCase):
             store = Store(tmp)
             (store.home / "feeds.yaml").write_text(
                 'youtube: ["@Asianometry"]\nfeeds: ["https://example.com/pod.rss"]\npriority: low\ntags: [watch]\n')
-            self.assertEqual(len(sync(store, get, dry_run=True)), 2)
+            self.assertEqual(sum("capture" in l for l in sync(store, get, dry_run=True)), 2)
             self.assertEqual(list(store.items()), [])
 
             report = sync(store, get)
@@ -500,10 +500,10 @@ class FeedsTest(unittest.TestCase):
             video = items["The TSMC Story"]
             self.assertEqual((video.channel, video.source["author"], video.tags), ("youtube", "Asianometry", ["watch"]))
             self.assertEqual(video.extra["hints"]["priority"], "low")
-            self.assertEqual(sync(store, get), [])  # nothing new on the next run
+            self.assertEqual([l for l in sync(store, get) if "capture" in l], [])  # nothing new next run
 
             pages["yt"] = pages["yt"].replace("NEW1", "NEW2").replace("The TSMC Story", "ASML deep dive")
-            self.assertEqual(len(sync(store, get)), 1)
+            self.assertEqual(sum("capture" in l for l in sync(store, get)), 1)
             self.assertIn("ASML deep dive", {i.title for i in store.items()})
 
     def test_follow(self):

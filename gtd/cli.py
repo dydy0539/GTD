@@ -97,7 +97,8 @@ def cmd_feeds_sync(store: Store, a: argparse.Namespace) -> int:
     from .feeds import sync
 
     report = sync(store, dry_run=a.dry_run)
-    print(f"Feeds{' (dry run — nothing saved)' if a.dry_run else ''}: {len(report)} new")
+    new = sum(line.lstrip().startswith("capture") for line in report)
+    print(f"Feeds{' (dry run — nothing saved)' if a.dry_run else ''}: {new} new")
     print("\n".join(report))
     return 0
 
