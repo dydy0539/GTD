@@ -17,17 +17,24 @@ jobs:
     env:
       GTD_HOME: ${{ github.workspace }}
       TZ: ${{ vars.TZ || 'UTC' }}
+      GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
     steps:
+      - name: Waiting for Gmail secrets
+        if: env.GMAIL_APP_PASSWORD == ''
+        run: echo "::notice::Add GMAIL_ADDRESS and GMAIL_APP_PASSWORD secrets to start pulling Gmail."
       - uses: actions/checkout@v4
+        if: env.GMAIL_APP_PASSWORD != ''
       - uses: actions/setup-python@v5
+        if: env.GMAIL_APP_PASSWORD != ''
         with: {python-version: "3.12"}
-      - run: pip install --quiet "git+https://github.com/dydy0539/GTD"
+      - if: env.GMAIL_APP_PASSWORD != ''
+        run: pip install --quiet "git+https://github.com/dydy0539/GTD"
       - name: Pull Gmail into the inbox
-        env:
-          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        if: env.GMAIL_APP_PASSWORD != ''
         run: gtd gmail sync
       - name: Commit and push
+        if: env.GMAIL_APP_PASSWORD != ''
         run: |
           git config user.name "gtd-bot"
           git config user.email "gtd-bot@users.noreply.github.com"
