@@ -298,8 +298,8 @@ class TelegramTest(unittest.TestCase):
             self.assertTrue((store.path_of(items["image"].id) / "attachments" / "telegram-4.jpg").exists())
             self.assertEqual(items["message"].source["forwarded_from"], "Sam Lee")
             self.assertEqual(items["message"].title, "Sam Lee: see you at 7")
-            self.assertIn("refused", report[-1])
-            self.assertIn("Sorry, this is a private inbox.", fake.sent)
+            self.assertIn("held", report[-1])
+            self.assertTrue(any(t.startswith("This is a private inbox") for t in fake.sent))
             self.assertEqual(sum(t.startswith("✓ Captured") for t in fake.sent), 5)
             self.assertEqual(fake.confirmed, 8)
 
@@ -594,3 +594,34 @@ class SiteTest(unittest.TestCase):
             self.assertEqual(rec["The TSMC Story"]["source"], "YouTube & feeds")
             self.assertEqual(rec["</script><b>x</b>"]["priority"], "high")
             self.assertTrue(site.document([]).startswith("<!doctype html>"))
+
+
+class TwoPhonesTest(unittest.TestCase):
+    def test_link_second_account(self):
+        import re as _re
+        from gtd.telegram import TelegramAPI, sync
+        fake = FakeTelegram([tg(1, 42, text="from phone one")])
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            api = TelegramAPI("TOKEN", http=fake)
+            sync(store, api)                                   # 42 becomes the owner
+
+            import time as _time
+            now_ts = int(_time.time())
+            fake.updates += [tg(2, 77, text="buy printer ink", date=now_ts),  # phone two, not linked yet: held
+                             tg(3, 77, text="/join 000000", date=now_ts)]     # wrong code: refused
+            sync(store, api)
+            self.assertEqual({i.title for i in store.items()}, {"from phone one"})
+
+            fake.updates.append(tg(4, 42, text="/invite"))
+            sync(store, api)
+            code = _re.search(r"/join (\d{6})", fake.sent[-1]).group(1)
+
+            fake.updates += [tg(5, 77, text=f"/join {code}"), tg(6, 77, text="call the plumber")]
+            sync(store, api)
+            self.assertEqual({i.title for i in store.items()},
+                             {"from phone one", "buy printer ink", "call the plumber"})  # held message kept
+
+            fake.updates.append(tg(7, 99, text=f"/join {code}"))   # the code works only once
+            sync(store, api)
+            self.assertEqual(len(list(store.items())), 3)

@@ -3,7 +3,9 @@
 No server: the scheduled job calls getUpdates (Telegram keeps undelivered
 messages for 24 hours), captures them, and replies "✓ Captured" in the chat.
 The first person to message the bot becomes its owner (saved in
-$GTD_HOME/state/telegram.json); anyone else is refused.
+$GTD_HOME/state/telegram.json). More accounts (a second phone) link with
+/invite from a linked account and /join <code> from the new one; messages
+from unlinked accounts are held for 24 hours and captured once they link.
 
     text / dictation         → text item
     a link (+ comment)       → url / youtube / twitter / podcast item, comment = note
@@ -14,9 +16,10 @@ $GTD_HOME/state/telegram.json); anyone else is refused.
 from __future__ import annotations
 
 import json
+import secrets
 import mimetypes
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from urllib.request import Request, urlopen
 
@@ -132,28 +135,24 @@ def _state_path(store: Store):
     return store.home / "state" / "telegram.json"
 
 
+INVITE_HOURS = 24
+
+
 def sync(store: Store, api: TelegramAPI, *, dry_run: bool = False) -> list[str]:
     path = _state_path(store)
     state = json.loads(path.read_text()) if path.exists() else {}
-    offset, owner = state.get("offset", 0), state.get("owner_id")
+    offset = state.get("offset", 0)
+    owners = list(state.get("owner_ids") or ([state["owner_id"]] if state.get("owner_id") else []))
+    invite = state.get("invite")                       # {"code", "expires"} while a link is pending
+    pending = state.get("pending", {})                 # messages from not-yet-linked accounts
     report = []
+    now_ = datetime.now(timezone.utc)
+    if invite and datetime.fromisoformat(invite["expires"]) < now_:
+        invite = None
 
-    for update in api.call("getUpdates", offset=offset, timeout=0, allowed_updates=["message"]):
-        offset = update["update_id"] + 1
-        msg = update.get("message")
-        if not msg or msg["chat"].get("type") != "private":
-            continue
-        sender = msg["from"]["id"]
-        if owner is None:
-            owner = sender
-            if not dry_run:
-                api.reply(msg["chat"]["id"], "This bot is now linked to you. " + HELP)
-        if sender != owner:
-            report.append(f"  refused  message from user {sender} (not the owner)")
-            if not dry_run:
-                api.reply(msg["chat"]["id"], "Sorry, this is a private inbox.")
-            continue
+    def capture(msg: dict) -> None:
         text_in = (msg.get("text") or "").strip()
+        chat = msg["chat"]["id"]
         if text_in.lower().startswith("/follow"):
             ref = text_in[len("/follow"):].strip().split()[0] if text_in[len("/follow"):].strip() else ""
             if not dry_run:
@@ -162,13 +161,14 @@ def sync(store: Store, api: TelegramAPI, *, dry_run: bool = False) -> list[str]:
                     answer = follow(store, ref) if ref else "Usage: /follow @channel (or a channel / feed link)"
                 except ValueError as e:
                     answer = str(e)
-                api.reply(msg["chat"]["id"], answer)
+                api.reply(chat, answer)
             report.append(f"  follow   {ref}")
-            continue
+            return
         if text_in.startswith("/"):
             if not dry_run:
-                api.reply(msg["chat"]["id"], HELP + "\n\n/follow @channel — follow a YouTube channel or feed")
-            continue
+                api.reply(chat, HELP + "\n\n/follow @channel — follow a YouTube channel or feed"
+                                "\n/invite — link another Telegram account (e.g. your other phone)")
+            return
         for item, blobs in message_to_items(msg, api):
             if not dry_run:
                 item, created = store.add(item, blobs=blobs)
@@ -181,12 +181,64 @@ def sync(store: Store, api: TelegramAPI, *, dry_run: bool = False) -> list[str]:
                 if event:
                     when_ = datetime.fromisoformat(event["start"]).strftime("%a %d %b %H:%M")
                     text += f"\n📅 {when_} · {event['location'][:60]}\nAdd to calendar: {add_link(event)}"
-                api.reply(msg["chat"]["id"], text)
+                api.reply(chat, text)
             report.append(f"  capture  {item.icon} {item.title[:60]}")
+
+    for update in api.call("getUpdates", offset=offset, timeout=0, allowed_updates=["message"]):
+        offset = update["update_id"] + 1
+        msg = update.get("message")
+        if not msg or msg["chat"].get("type") != "private":
+            continue
+        sender = msg["from"]["id"]
+        chat = msg["chat"]["id"]
+        text_in = (msg.get("text") or "").strip()
+        if not owners:
+            owners = [sender]
+            if not dry_run:
+                api.reply(chat, "This bot is now linked to you. " + HELP)
+
+        if sender in owners and text_in.lower().startswith("/invite"):
+            invite = {"code": f"{secrets.randbelow(10**6):06d}",
+                      "expires": (now_ + timedelta(hours=INVITE_HOURS)).isoformat()}
+            report.append("  invite   code issued")
+            if not dry_run:
+                api.reply(chat, f"From your other Telegram account, open this bot and send:\n\n/join {invite['code']}"
+                                f"\n\nThe code works once, for {INVITE_HOURS} hours.")
+            continue
+
+        if sender not in owners:
+            code = text_in[len("/join"):].strip() if text_in.lower().startswith("/join") else ""
+            if invite and code and secrets.compare_digest(code, invite["code"]):
+                owners.append(sender)
+                invite = None
+                report.append(f"  linked   user {sender}")
+                if not dry_run:
+                    api.reply(chat, "Linked. Everything you send here now lands in the same in-tray. " + HELP)
+                for waiting in pending.pop(str(sender), []):  # messages sent before linking
+                    capture(waiting)
+                continue
+            report.append(f"  held     message from user {sender} (not linked)")
+            if not dry_run:
+                box = pending.setdefault(str(sender), [])
+                if not text_in.lower().startswith("/join") and len(box) < 20:
+                    box.append(msg)
+                api.reply(chat, "This is a private inbox. To link this account, send /invite from the "
+                                "linked phone, then /join <code> here. Your messages are kept for 24 hours.")
+            continue
+
+        capture(msg)
+
+    # messages from accounts that never linked are dropped after a day
+    for sender_id in list(pending):
+        pending[sender_id] = [m for m in pending[sender_id]
+                              if now_.timestamp() - m.get("date", 0) < INVITE_HOURS * 3600]
+        if not pending[sender_id]:
+            del pending[sender_id]
 
     if not dry_run:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"offset": offset, "owner_id": owner}) + "\n")
+        path.write_text(json.dumps({"offset": offset, "owner_ids": owners, "invite": invite,
+                                    "pending": pending}, ensure_ascii=False) + "\n")
         if offset:  # confirm the processed updates so Telegram stops re-sending them
             api.call("getUpdates", offset=offset, timeout=0, limit=1)
     return report
