@@ -12,6 +12,9 @@ youtube: []
 feeds: []
 #  - https://example.com/podcast.rss
 
-skip_shorts: true
+people: []           # new videos featuring someone, on ANY channel (YouTube search, newest first)
+#  - {name: Dylan Patel, priority: normal, tags: [watch, dylan-patel]}
+
+skip_shorts: true    # also skips clips under 2 minutes
 priority: low          # hint shown in the inbox (low = ↓)
 tags: [watch]

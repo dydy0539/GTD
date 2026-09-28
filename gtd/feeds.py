@@ -8,6 +8,8 @@ $GTD_HOME/feeds.yaml:
       - https://www.youtube.com/@AsianometryYT
     feeds:                         # any RSS/Atom feed (podcasts, blogs)
       - https://feeds.megaphone.fm/investlikethebest
+    people:                        # new videos featuring someone, on any channel
+      - {name: Dylan Patel, priority: normal, tags: [watch, dylan-patel]}
     skip_shorts: true
     priority: low                  # hint for everything captured from feeds
     tags: [watch]
@@ -100,6 +102,57 @@ def parse_feed(xml: str) -> tuple[str, list[dict]]:
     return title, entries
 
 
+# ---------- people: new YouTube videos that feature someone, on any channel ----------
+SEARCH_URL = "https://www.youtube.com/results?search_query={q}&sp=CAI%253D"  # sorted by upload date
+REL_TIME = re.compile(r"(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago", re.I)
+UNIT = {"second": 1, "minute": 60, "hour": 3600, "day": 86400, "week": 604800,
+        "month": 2592000, "year": 31536000}
+
+
+def _runs(obj) -> str:
+    if not isinstance(obj, dict):
+        return ""
+    return obj.get("simpleText") or "".join(r.get("text", "") for r in obj.get("runs", []))
+
+
+def _video_renderers(node):
+    if isinstance(node, dict):
+        if "videoRenderer" in node:
+            yield node["videoRenderer"]
+        for v in node.values():
+            yield from _video_renderers(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _video_renderers(v)
+
+
+def youtube_search(name: str, get=fetch) -> tuple[str, list[dict]]:
+    """Newest YouTube videos whose title or description mentions `name`."""
+    from urllib.parse import quote_plus
+    page = get(SEARCH_URL.format(q=quote_plus(f'"{name}"')))
+    m = re.search(r"var ytInitialData\s*=\s*(\{.*?\});\s*</script>", page, re.S)
+    if not m:
+        raise ValueError("couldn't read YouTube search results")
+    data = json.loads(m.group(1))
+    entries, needle = [], name.lower()
+    for v in _video_renderers(data):
+        title = _runs(v.get("title"))
+        snippet = " ".join(_runs(s.get("snippetText")) for s in v.get("detailedMetadataSnippets", []))
+        snippet += " " + _runs(v.get("descriptionSnippet"))
+        if needle not in f"{title} {snippet}".lower():
+            continue
+        published = None
+        rel = REL_TIME.search(_runs(v.get("publishedTimeText")))
+        if rel:
+            published = now() - timedelta(seconds=int(rel.group(1)) * UNIT[rel.group(2).lower()])
+        length = [int(x) for x in _runs(v.get("lengthText")).split(":") if x.isdigit()]
+        seconds = sum(n * 60 ** i for i, n in enumerate(reversed(length))) if length else None
+        entries.append({"id": v["videoId"], "title": title, "seconds": seconds,
+                        "url": f"https://www.youtube.com/watch?v={v['videoId']}",
+                        "published": published, "author": _runs(v.get("ownerText")) or "YouTube"})
+    return f"YouTube: {name}", entries
+
+
 def load_config(store: Store) -> dict:
     path = store.home / "feeds.yaml"
     return (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
@@ -113,20 +166,27 @@ def sync(store: Store, get=fetch, *, dry_run: bool = False) -> list[str]:
     seen = state.setdefault("seen", {})           # feed url → [entry ids]
     report = []
 
-    urls = []
+    # sources: (key in state, loader returning (title, entries), per-source overrides)
+    sources = []
     for ref in cfg.get("youtube") or []:
         try:
             channels[ref] = channels.get(ref) or resolve_channel(str(ref), get)
-            urls.append(youtube_feed_url(channels[ref]))
+            u = youtube_feed_url(channels[ref])
+            sources.append((u, lambda u=u: parse_feed(get(u)), {}))
         except Exception as e:
             report.append(f"  ✗ {ref}  ({e})"[:140])
-    urls += [str(u) for u in cfg.get("feeds") or []]
+    for u in cfg.get("feeds") or []:
+        sources.append((str(u), lambda u=str(u): parse_feed(get(u)), {}))
+    for spec in cfg.get("people") or []:
+        spec = {"name": spec} if isinstance(spec, str) else dict(spec)
+        name = spec["name"]
+        sources.append((f"youtube-search:{name}", lambda n=name: youtube_search(n, get), spec))
 
-    for url in urls:
+    for url, load, opts in sources:
         try:
-            feed_title, entries = parse_feed(get(url))
+            feed_title, entries = load()
         except Exception as e:
-            report.append(f"  ✗ {url}  ({type(e).__name__})"[:140])
+            report.append(f"  ✗ {url}  ({type(e).__name__}: {e})"[:160])
             continue
         first_time = url not in seen
         known = set(seen.get(url, []))
@@ -135,21 +195,23 @@ def sync(store: Store, get=fetch, *, dry_run: bool = False) -> list[str]:
                 continue
             known.add(e["id"])
             too_old = first_time and e["published"] and e["published"] < now() - NEW_FEED_LOOKBACK
-            if too_old or (cfg.get("skip_shorts", True) and "/shorts/" in e["url"]):
+            is_short = "/shorts/" in e["url"] or (e.get("seconds") is not None and e["seconds"] < 120)
+            if too_old or (cfg.get("skip_shorts", True) and is_short):
                 continue
             item = adapters.from_url(e["url"], via="feed", title=e["title"][:120] or None)
             item.source.update({"author": e["author"], "feed": feed_title or url,
                                 "published": e["published"].isoformat() if e["published"] else None})
             item.source = {k: v for k, v in item.source.items() if v}
-            item.tags = list(cfg.get("tags") or [])
-            if cfg.get("priority"):
-                item.extra["hints"] = {"priority": cfg["priority"], "rule": "feeds.yaml"}
+            item.tags = list(opts.get("tags") or cfg.get("tags") or [])
+            priority = opts.get("priority", cfg.get("priority"))
+            if priority and priority != "normal":
+                item.extra["hints"] = {"priority": priority, "rule": "feeds.yaml"}
             if not dry_run:
                 store.add(item)
             report.append(f"  capture  {item.icon} {e['author'][:25]}: {e['title'][:60]}")
         seen[url] = sorted(known)[-500:]
 
-    if not dry_run and urls:
+    if not dry_run and sources:
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(state, ensure_ascii=False, indent=1) + "\n")
     return report

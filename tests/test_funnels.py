@@ -533,3 +533,43 @@ class FeedsTest(unittest.TestCase):
             self.assertEqual(import_takeout(store, csv_file), 2)
             self.assertEqual(len(load_config(store)["youtube"]), 2)
             self.assertEqual(import_takeout(store, csv_file), 0)
+
+
+def _yt_search_page(videos):
+    items = [{"videoRenderer": {
+        "videoId": vid, "title": {"runs": [{"text": title}]},
+        "ownerText": {"runs": [{"text": channel}]},
+        "publishedTimeText": {"simpleText": ago}, "lengthText": {"simpleText": length},
+        "detailedMetadataSnippets": [{"snippetText": {"runs": [{"text": snippet}]}}]}}
+        for vid, title, channel, ago, length, snippet in videos]
+    data = {"contents": {"twoColumnSearchResultsRenderer": {"primaryContents": {"sectionListRenderer": {
+        "contents": [{"itemSectionRenderer": {"contents": items}}]}}}}}
+    import json as _json
+    return f"<script>var ytInitialData = {_json.dumps(data)};</script>"
+
+
+class PeopleSearchTest(unittest.TestCase):
+    def test_new_videos_featuring_a_person(self):
+        from gtd.feeds import sync
+        videos = [
+            ("v1", "Dylan Patel on the GPU supply chain", "No Priors", "5 hours ago", "1:12:03", ""),
+            ("v2", "AI capex debate", "BG2 Pod", "2 days ago", "58:10", "with Dylan Patel of SemiAnalysis"),
+            ("v3", "Dylan Patel in 60 seconds", "Clips", "1 day ago", "0:59", ""),
+            ("v4", "Unrelated video", "Someone", "3 hours ago", "10:00", "nothing to see"),
+            ("v5", "Dylan Patel 2025 interview", "Old Show", "3 weeks ago", "45:00", ""),
+        ]
+        pages = {"html": _yt_search_page(videos)}
+        get = lambda url: pages["html"] if "results?search_query=%22Dylan+Patel%22" in url else (_ for _ in ()).throw(OSError(url))
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            (store.home / "feeds.yaml").write_text(
+                "people:\n  - {name: Dylan Patel, priority: normal, tags: [watch, dylan-patel]}\npriority: low\n")
+            sync(store, get)
+            items = {i.title: i for i in store.items()}
+            self.assertEqual(set(items), {"Dylan Patel on the GPU supply chain", "AI capex debate"})
+            got = items["AI capex debate"]
+            self.assertEqual((got.source["author"], got.tags), ("BG2 Pod", ["watch", "dylan-patel"]))
+            self.assertNotIn("hints", got.extra)  # normal priority, not the feeds' low default
+            videos.insert(0, ("v6", "Dylan Patel x Dwarkesh", "Dwarkesh Patel", "10 minutes ago", "2:01:00", ""))
+            pages["html"] = _yt_search_page(videos)
+            self.assertEqual(len(sync(store, get)), 1)
