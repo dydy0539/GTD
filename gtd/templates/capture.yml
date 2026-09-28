@@ -9,7 +9,8 @@
 # Optional variable:  TZ  e.g. America/New_York (used for INBOX.md dates)
 name: capture
 on:
-  schedule: [{cron: "*/30 * * * *"}]
+  # :07 and :37, not :00/:30: GitHub delays or drops scheduled runs at busy on-the-hour times
+  schedule: [{cron: "7,37 * * * *"}]
   workflow_dispatch:
 concurrency: {group: capture, cancel-in-progress: false}
 permissions: {contents: write}
