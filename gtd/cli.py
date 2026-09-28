@@ -90,9 +90,9 @@ def cmd_telegram_sync(store: Store, a: argparse.Namespace) -> int:
 
 
 def cmd_enrich(store: Store, a: argparse.Namespace) -> int:
-    from .enrich import enrich_titles
+    from .enrich import backfill_priority, enrich_images, enrich_titles
 
-    report = enrich_titles(store)
+    report = enrich_titles(store) + enrich_images(store) + backfill_priority(store)
     print(f"Enriched {sum(l.lstrip().startswith('✓') for l in report)} item(s)")
     print("\n".join(report))
     return 0
@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     ts.add_argument("--dry-run", action="store_true", help="show what would be captured")
     ts.set_defaults(fn=cmd_telegram_sync)
 
-    e = sub.add_parser("enrich", help="look up real titles for captured links")
+    e = sub.add_parser("enrich", help="real titles for links, read screenshots, priority markers")
     e.set_defaults(fn=cmd_enrich)
 
     i = sub.add_parser("init", help="scaffold the data repo ($GTD_HOME or --home)")

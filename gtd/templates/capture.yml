@@ -6,6 +6,7 @@
 # once its secret exists:
 #   GMAIL_ADDRESS, GMAIL_APP_PASSWORD   Gmail (app password from myaccount.google.com/apppasswords)
 #   TELEGRAM_BOT_TOKEN                  Telegram bot (token from @BotFather)
+#   ANTHROPIC_API_KEY                   optional: read screenshots with Claude (console.anthropic.com)
 # Optional variable:  TZ  e.g. America/New_York (used for INBOX.md dates)
 name: capture
 on:
@@ -24,18 +25,19 @@ jobs:
       GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - run: pip install --quiet "git+https://github.com/dydy0539/GTD"
+      - run: pip install --quiet "gtd[vision] @ git+https://github.com/dydy0539/GTD"
       - name: Pull Gmail
         if: env.GMAIL_APP_PASSWORD != ''
         run: gtd gmail sync
       - name: Pull Telegram
         if: always() && env.TELEGRAM_BOT_TOKEN != ''
         run: gtd telegram sync
-      - name: Look up titles for new links
+      - name: Titles for links, read screenshots, priority markers
         if: always()
         continue-on-error: true
         run: gtd enrich

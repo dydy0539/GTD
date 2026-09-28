@@ -33,6 +33,38 @@ def first_line(text: str, max_len: int = 80) -> str:
     return line if len(line) <= max_len else line[: max_len - 1] + "…"
 
 
+# ---------- priority markers you type yourself ----------
+SELF_AUTHORED = {"cli", "claude", "telegram", "email-to-self"}
+PRIORITY_RE = re.compile(
+    r"(?i)(?:^|(?<=\s))(?:(?P<high>!high|!urgent|!!|high priority|urgent)|(?P<low>!low|low priority))"
+    r"(?=$|[\s.,;:!)])"
+)
+
+
+def apply_priority_markers(item: Item) -> str | None:
+    """`!high`, `!!`, `high priority`, `urgent` → ❗; `!low`, `low priority` → low.
+
+    Only for things you wrote yourself. The marker is removed from the title
+    and note; the raw content keeps it.
+    """
+    found = None
+    for field in ("title", "note"):
+        text = getattr(item, field)
+        m = PRIORITY_RE.search(text or "")
+        if not m:
+            continue
+        found = found or ("high" if m.group("high") else "low")
+        cleaned = PRIORITY_RE.sub("", text)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" \t:-–,;")
+        setattr(item, field, cleaned or text)
+    if found:
+        hints = dict(item.extra.get("hints") or {})
+        hints.setdefault("priority", found)
+        hints.setdefault("rule", "typed marker")
+        item.extra["hints"] = hints
+    return found
+
+
 # ---------- text / dictation / chat ----------
 def from_text(text: str, *, via: str = "cli", channel: str = "text",
               title: str | None = None, note: str = "", **source) -> Item:

@@ -15,6 +15,7 @@ from typing import Iterator
 
 import yaml
 
+from .adapters import SELF_AUTHORED, apply_priority_markers
 from .model import Item, now
 
 CONTENT_H = "## Content"
@@ -38,6 +39,8 @@ class Store:
 
         Returns (item, created). Duplicates are recaptured, not re-added.
         """
+        if item.via in SELF_AUTHORED:
+            apply_priority_markers(item)
         if item.content_hash:
             existing = self.find_by_hash(item.content_hash)
             if existing:

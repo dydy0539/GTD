@@ -7,6 +7,7 @@ from pathlib import Path
 from gtd import adapters, datarepo
 from gtd.gmail import Mail, parse_fetch_meta, sync
 from gtd.rules import Rules
+from gtd.model import Item
 from gtd.store import Store
 
 ME = "me@gmail.com"
@@ -306,3 +307,69 @@ class TelegramTest(unittest.TestCase):
             sync(store, api)
             self.assertEqual(len(list(store.items())), 5)
             self.assertTrue(fake.sent[-1].startswith("↺ Already"))
+
+
+class PriorityAndVisionTest(unittest.TestCase):
+    def test_priority_markers_only_for_things_i_wrote(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            mine, _ = store.add(adapters.from_text("Buy air purifier high priority", via="telegram"))
+            self.assertEqual(mine.title, "Buy air purifier")
+            self.assertEqual(mine.extra["hints"]["priority"], "high")
+            self.assertIn("high priority", store.get(mine.id).content)  # raw kept
+            later, _ = store.add(adapters.from_url("https://example.com/x", via="telegram", note="!low someday"))
+            self.assertEqual((later.note, later.extra["hints"]["priority"]), ("someday", "low"))
+            spam = adapters.from_eml(mail("shop@x.com", ME, "URGENT sale ends today"), via="gmail")
+            store.add(spam)
+            self.assertNotIn("hints", store.get(spam.id).extra)
+            self.assertEqual(store.get(spam.id).title, "URGENT sale ends today")
+
+    def test_backfill_priority(self):
+        from gtd.enrich import backfill_priority
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            item = adapters.from_text("Buy air purifier high priority", via="telegram")
+            item.via = "old"  # captured before markers existed
+            store.add(item)
+            loaded = store.get(item.id)
+            loaded.via = "telegram"
+            store.save(loaded)
+            self.assertEqual(len(backfill_priority(store)), 1)
+            self.assertEqual(store.get(item.id).title, "Buy air purifier")
+            self.assertEqual(backfill_priority(store), [])
+
+    def test_enrich_images(self):
+        from types import SimpleNamespace
+        from gtd.enrich import enrich_images
+
+        class FakeClaude:
+            def __init__(self):
+                self.calls = []
+                self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
+
+            def create(self, **kw):
+                self.calls.append(kw)
+                text = ('{"title": "Ibiden sell call in Semiconductor degens chat", '
+                        '"summary": "Group chat about Ibiden falling after a GPT sell call.", '
+                        '"text": "Ibiden dropping so much", "urls": ["https://x.com/a/status/1"]}')
+                return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text=text)])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            blob = {"telegram-4.jpg": b"\xff\xd8jpeg"}
+            shot = Item(channel="image", title="telegram-4.jpg", via="telegram", enrichment="pending",
+                        source={"filename": "telegram-4.jpg", "mime": "image/jpeg"}, content_hash="h1")
+            captioned = Item(channel="image", title="flight options", via="telegram", enrichment="pending",
+                             source={"filename": "telegram-5.jpg", "mime": "image/jpeg"}, content_hash="h2")
+            store.add(shot, blobs=blob)
+            store.add(captioned, blobs={"telegram-5.jpg": b"\xff\xd8jpeg2"})
+            claude = FakeClaude()
+            report = enrich_images(store, client=claude)
+            self.assertEqual(len(report), 2)
+            got = store.get(shot.id)
+            self.assertEqual(got.title, "Ibiden sell call in Semiconductor degens chat")
+            self.assertEqual(got.enrichment, "done")
+            self.assertIn("https://x.com/a/status/1", got.summary)
+            self.assertEqual(store.get(captioned.id).title, "flight options")  # caption kept
+            self.assertEqual(claude.calls[0]["model"], "claude-opus-5")
+            self.assertEqual(enrich_images(store, client=claude), [])  # nothing left to do
