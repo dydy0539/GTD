@@ -373,3 +373,57 @@ class PriorityAndVisionTest(unittest.TestCase):
             self.assertEqual(store.get(captioned.id).title, "flight options")  # caption kept
             self.assertEqual(claude.calls[0]["model"], "claude-opus-5")
             self.assertEqual(enrich_images(store, client=claude), [])  # nothing left to do
+
+
+class CalendarTest(unittest.TestCase):
+    SOFIA = "地址：The Riverwalk, 20 Upper Circular Road, Singapore 058416\n时间：星期三下午2点15 @🦩sofia"
+
+    def test_when_parser(self):
+        from datetime import datetime
+        from gtd.when import find
+        now = datetime(2026, 9, 28, 16, 40)  # Monday
+        f = find(self.SOFIA, now)
+        self.assertEqual((f.start, f.rest), (datetime(2026, 9, 30, 14, 15), "@🦩sofia"))
+        self.assertEqual(find("Dinner tomorrow 7:30pm\nLocation: Burnt Ends", now).start,
+                         datetime(2026, 9, 29, 19, 30))
+        self.assertEqual(find("下周三晚上8点 电影\n地点：Jewel Changi", now).start, datetime(2026, 10, 7, 20, 0))
+        self.assertEqual(find("場所：渋谷\n金曜日 午後3時 打ち合わせ", now).start, datetime(2026, 10, 2, 15, 0))
+        self.assertIsNone(find("Buy tennis balls", now))
+        self.assertIsNone(find("call mom at 7pm", now))          # no place → not an appointment
+        self.assertIsNone(find("Location: office", now))         # no time
+
+    def test_schedule(self):
+        from gtd.gcal import schedule
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            item = adapters.from_text(self.SOFIA, via="telegram")
+            item.source["sent_at"] = "2026-09-28T08:40:00+00:00"  # Monday 16:40 in Singapore
+            store.add(item)
+            bank = adapters.from_eml(mail("bank@x.com", ME, "Branch visit",
+                                          "Address: 1 Raffles Pl, Singapore 048616\nMonday 10am"), via="gmail")
+            store.add(bank)
+
+            report = schedule(store)  # no calendar configured → link only
+            self.assertEqual(len(report), 1)
+            cal = store.get(item.id).extra["calendar"]
+            self.assertEqual((cal["start"], cal["timezone"], cal["status"]),
+                             ("2026-09-30T14:15", "Asia/Singapore", "proposed"))
+            self.assertEqual(cal["summary"], "with 🦩sofia · The Riverwalk")
+            self.assertIn("calendar.google.com", cal["add_link"])
+            self.assertNotIn("calendar", store.get(bank.id).extra)  # only things I wrote
+            self.assertEqual(schedule(store), [])  # nothing changes on the next run
+
+            class FakeCal:
+                calls = []
+                def insert(self, event_id, event):
+                    self.calls.append((event_id, event))
+                    return {"id": event_id, "htmlLink": "https://calendar.google.com/event?eid=x"}
+            fake = FakeCal()
+            schedule(store, fake)
+            cal = store.get(item.id).extra["calendar"]
+            self.assertEqual(cal["status"], "added")
+            self.assertEqual(fake.calls[0][1]["start"], "2026-09-30T14:15")
+            schedule(store, fake)
+            self.assertEqual(len(fake.calls), 1)  # never added twice
+            from gtd import render
+            self.assertIn("on your calendar ✓", render.as_markdown(list(store.items())))

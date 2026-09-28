@@ -60,6 +60,19 @@ def flags(item: Item) -> str:
     return out + (f" `{hints['area']}`" if hints.get("area") else "")
 
 
+def calendar_line(item: Item) -> str:
+    cal = item.extra.get("calendar")
+    if not cal:
+        return ""
+    when = datetime.fromisoformat(cal["start"]).strftime("%a %d %b %H:%M")
+    tz = cal["timezone"].split("/")[-1].replace("_", " ")
+    if cal.get("status") == "added":
+        link = f"[on your calendar ✓]({cal['html_link']})" if cal.get("html_link") else "on your calendar ✓"
+    else:
+        link = f"[➕ Add to Google Calendar]({cal['add_link']})"
+    return f"📅 **{when}** ({tz}) · {cal['location'][:50]} · {link}"
+
+
 def as_markdown(items: list[Item]) -> str:
     """Deterministic (no relative times) so the file only changes when items do."""
     if items:
@@ -76,6 +89,8 @@ def as_markdown(items: list[Item]) -> str:
             line = f"- {i.icon} **{title}**{flags(i)} · {i.captured_at.astimezone():%H:%M} · `{i.id}`"
             if preview(i):
                 line += f"  \n  {preview(i)}"
+            if calendar_line(i):
+                line += f"  \n  {calendar_line(i)}"
             snippet = i.summary or (i.content if i.channel in ("text", "chat", "email") else "")
             first = snippet.strip().splitlines()[0][:160] if snippet.strip() else ""
             if first and first != i.title:

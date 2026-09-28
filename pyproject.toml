@@ -8,6 +8,7 @@ dependencies = ["PyYAML>=6"]
 [project.optional-dependencies]
 # Enrichment extras (milestone M2+), not needed for capture
 vision = ["anthropic>=1.0"]   # read screenshots (needs ANTHROPIC_API_KEY)
+calendar = ["google-auth>=2", "requests"]   # create events (needs GOOGLE_SERVICE_ACCOUNT_JSON)
 
 [project.scripts]
 gtd = "gtd.cli:main"
