@@ -1,0 +1,8 @@
+__pycache__/
+*.egg-info/
+.venv/
+build/
+dist/
+# personal data never goes in the code repo
+gtd-data/
+data/
