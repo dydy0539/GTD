@@ -1,0 +1,3 @@
+# Several writers (laptop, phone via Claude, the scheduled job) append to the
+# event log at the same time; union-merge keeps every line instead of conflicting.
+events.jsonl merge=union

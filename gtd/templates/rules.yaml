@@ -1,0 +1,48 @@
+# Capture rules for Gmail — which mail becomes "stuff" in your GTD inbox.
+#
+# This is a capture filter, not the decision engine: it only decides what
+# ENTERS the inbox and adds hints (priority, area, tags) for later.
+# Test changes safely with:   gtd gmail sync --dry-run
+#
+# Matching (inside `when`, all conditions must hold):
+#   from, to, subject, body, text, domain, channel, label  → text match
+#       "abc"      case-insensitive substring
+#       "/regex/"  regular expression
+#       [a, b]     any of
+#   newsletter: true      mail with List-Unsubscribe / List-Id headers
+#   has_attachment: true
+#
+# Actions (inside `then`):
+#   action: capture | skip        (default: capture)
+#   priority: high | normal | low (a hint for the decision engine)
+#   area: work | life             (a hint; GTD keeps ONE inbox for both)
+#   tags: [..]
+#   gmail_label: "Some/Label"     also label it in Gmail (works with skip too)
+
+me: [you@gmail.com]                    # your address(es); your own sent mail is ignored
+capture_address: you+gtd@gmail.com     # email-to-self funnel — always captured
+default: skip                          # mail no rule matches stays in Gmail only
+
+rules:                                 # first match wins, top to bottom
+  # --- people who matter: always capture, flag high -----------------------
+  - name: VIPs
+    when: {from: [boss@yourcompany.com, partner@example.com]}
+    then: {priority: high}
+
+  # --- work mail addressed to me directly ---------------------------------
+  - name: Work, to me
+    when: {domain: yourcompany.com, to: you@yourcompany.com}
+    then: {area: work}
+
+  # --- noise: never enters the inbox --------------------------------------
+  - name: Receipts & shipping
+    when: {subject: [receipt, "order confirm", "has shipped", invoice]}
+    then: {action: skip, gmail_label: Receipts}
+
+  - name: Newsletters I actually read
+    when: {newsletter: true, from: [stratechery.com, "@substack.com"]}
+    then: {tags: [read-later]}
+
+  - name: Other newsletters
+    when: {newsletter: true}
+    then: {action: skip}

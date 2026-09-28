@@ -7,13 +7,17 @@ A personal assistant built on David Allen's GTD method, in four steps:
 3. **Engage** — dashboard of what to do next and how
 4. **Reflect** — feedback on how you're doing
 
-Design: [`docs/design/01-stuff-inbox.md`](docs/design/01-stuff-inbox.md)
+- Design: [`docs/design/01-stuff-inbox.md`](docs/design/01-stuff-inbox.md)
+- **Setup across laptop / iPhone / Android: [`docs/setup.md`](docs/setup.md)**
+
+Your data lives in a separate **private** repo (`gtd-inbox`), never in this public one.
 
 ## Step 1 quick start
 
 ```bash
 pip install -e .                       # needs only PyYAML
-export GTD_HOME=~/gtd-data             # where your stuff lives (not in this repo)
+export GTD_HOME=~/gtd-inbox            # clone of your private inbox repo
+gtd init                               # scaffold rules.yaml, workflow, CLAUDE.md
 
 gtd capture "call dentist about the crown" -t life
 gtd capture https://youtu.be/abc123 --note "for the Q4 talk"
@@ -24,6 +28,8 @@ pbpaste | gtd capture -                # anything from stdin
 gtd ls                                 # human-readable inbox
 gtd show 20260928T1430                 # one item (id prefix works)
 gtd render                             # writes INBOX.md + inbox.html to $GTD_HOME
+gtd gmail sync --dry-run               # what rules.yaml would capture from Gmail
+gtd sync                               # commit, pull other devices, re-render, push
 ```
 
 Each item is a folder: `$GTD_HOME/stuff/YYYY/MM/<id>-<slug>/item.md`, plus an

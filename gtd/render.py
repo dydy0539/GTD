@@ -50,23 +50,36 @@ def as_text(items: list[Item]) -> str:
         out.append(f"\n{day}")
         for i in group:
             extra = f"  {preview(i)}" if preview(i) else ""
-            out.append(f"  {i.icon}  {i.id}  {i.title[:60]}{extra}  ·{age(i.captured_at)}")
+            out.append(f"  {i.icon}  {i.id}  {i.title[:60]}{flags(i)}{extra}  ·{age(i.captured_at)}")
     return "\n".join(out)
 
 
+def flags(item: Item) -> str:
+    hints = item.extra.get("hints") or {}
+    out = " ❗" if hints.get("priority") == "high" else ""
+    return out + (f" `{hints['area']}`" if hints.get("area") else "")
+
+
 def as_markdown(items: list[Item]) -> str:
-    out = [f"# {header(items)}", "", f"_Generated {now().astimezone():%Y-%m-%d %H:%M}_"]
-    for day, group in _grouped(items):
+    """Deterministic (no relative times) so the file only changes when items do."""
+    if items:
+        oldest = min(i.captured_at for i in items).astimezone()
+        head = f"# Inbox — {len(items)} item{'s' * (len(items) != 1)}\n\nOldest: {oldest:%a %d %b %Y}"
+    else:
+        head = "# Inbox — empty 🎉"
+    out = [head]
+    for day, group in groupby(items, key=lambda i: i.captured_at.astimezone().strftime("%a %d %b %Y")):
         out += ["", f"## {day}", ""]
         for i in group:
-            link = i.source.get("url")
+            link = i.source.get("url") or i.source.get("link")
             title = f"[{i.title}]({link})" if link else i.title
-            line = f"- {i.icon} **{title}** · {age(i.captured_at)} · `{i.id}`"
+            line = f"- {i.icon} **{title}**{flags(i)} · {i.captured_at.astimezone():%H:%M} · `{i.id}`"
             if preview(i):
                 line += f"  \n  {preview(i)}"
             snippet = i.summary or (i.content if i.channel in ("text", "chat", "email") else "")
-            if snippet and snippet.strip() != i.title:
-                line += f"  \n  > {snippet.strip().splitlines()[0][:160]}"
+            first = snippet.strip().splitlines()[0][:160] if snippet.strip() else ""
+            if first and first != i.title:
+                line += f"  \n  > {first}"
             out.append(line)
     return "\n".join(out) + "\n"
 

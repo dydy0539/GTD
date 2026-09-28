@@ -32,8 +32,12 @@ class Store:
         self.events_path = self.home / "events.jsonl"
 
     # ---------- write ----------
-    def add(self, item: Item, files: list[Path] | None = None) -> tuple[Item, bool]:
-        """Save a new item. Returns (item, created). Duplicates are recaptured, not re-added."""
+    def add(self, item: Item, files: list[Path] | None = None,
+            blobs: dict[str, bytes] | None = None) -> tuple[Item, bool]:
+        """Save a new item with attachments from disk (files) or memory (blobs).
+
+        Returns (item, created). Duplicates are recaptured, not re-added.
+        """
         if item.content_hash:
             existing = self.find_by_hash(item.content_hash)
             if existing:
@@ -42,12 +46,17 @@ class Store:
 
         folder = self._folder_for(item)
         folder.mkdir(parents=True, exist_ok=False)
+        att = folder / "attachments"
         for f in files or []:
-            att = folder / "attachments"
             att.mkdir(exist_ok=True)
             shutil.copy2(f, att / f.name)
             if f.name not in item.attachments:
                 item.attachments.append(f.name)
+        for name, data in (blobs or {}).items():
+            att.mkdir(exist_ok=True)
+            (att / Path(name).name).write_bytes(data)
+            if name not in item.attachments:
+                item.attachments.append(Path(name).name)
         self._write(folder, item)
         self.log("captured", item.id, channel=item.channel, via=item.via)
         return item, True

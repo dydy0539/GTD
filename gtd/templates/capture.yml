@@ -1,0 +1,34 @@
+# Pulls new Gmail every 30 minutes into this inbox repo (~1,440 Actions minutes/month,
+# inside the 2,000 free minutes private repos get). Run it by hand any time from the Actions tab.
+# Secrets (Settings → Secrets and variables → Actions):
+#   GMAIL_ADDRESS        your Gmail address
+#   GMAIL_APP_PASSWORD   an app password (myaccount.google.com/apppasswords)
+# Optional variable:  TZ  e.g. America/New_York (used for INBOX.md dates)
+name: capture
+on:
+  schedule: [{cron: "*/30 * * * *"}]
+  workflow_dispatch:
+concurrency: {group: capture, cancel-in-progress: false}
+permissions: {contents: write}
+jobs:
+  gmail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GTD_HOME: ${{ github.workspace }}
+      TZ: ${{ vars.TZ || 'UTC' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install --quiet "git+https://github.com/dydy0539/GTD"
+      - name: Pull Gmail into the inbox
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: gtd gmail sync
+      - name: Commit and push
+        run: |
+          git config user.name "gtd-bot"
+          git config user.email "gtd-bot@users.noreply.github.com"
+          gtd sync -m "capture: gmail"

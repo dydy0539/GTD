@@ -135,26 +135,60 @@ machines (Step 2 filters and routes on it). The body is for you and the LLM
 * **Funnels** are about *reach*: how an input gets from your phone or laptop to
   an adapter. They are the part you will keep adding to.
 
-### Recommended funnels (least friction first)
+### Funnels (decided 2026-09-28)
 
-1. **Talk to Claude.** "Add to my inbox: call dentist about the crown." Claude
-   runs `gtd capture`. This covers dictation, typed notes and "save this
-   link". Gmail is already connected to Claude, so it can pull tagged emails
-   on request.
-2. **Email forward / Gmail label.** Forward anything to a dedicated address,
-   or put a `GTD` label on a message. A sync job pulls labeled messages and
-   removes the label. Anything with a "share via email" button can then reach
-   the inbox: most messenger apps, podcast apps and browsers.
-3. **Mobile share sheet → Telegram bot (or iOS Shortcut).** The fastest way to
-   capture a tweet, YouTube link, screenshot or voice memo from your phone. The
-   bot calls the same adapters.
-4. **Drop folder.** A synced folder (iCloud or Dropbox) `~/gtd-drop/`.
-   Screenshots and voice memos saved there are picked up by
-   `gtd ingest-folder`.
+| # | Funnel | Works on | Good for |
+|---|---|---|---|
+| 1 | **Email to self**: share → Gmail → `you+gtd@gmail.com` | iPhone, Android, laptop | links, videos, tweets, podcasts, screenshots, voice memos, dictation (keyboard mic), forwarded emails, pasted chats |
+| 2 | **Gmail rules**: `rules.yaml` pulls in mail that matters | everywhere (server-side) | email that is itself stuff (boss, clients, bills) |
+| 3 | **Claude**: "add to my inbox: …" | Claude app on any device | thinking out loud, longer notes |
+| 4 | **CLI**: `gtd capture …` | laptop | files, quick notes while working |
 
-Twitter's API is expensive and messenger apps have no general API, so for
-those the plan is *share URL / forward text*, not *sync the whole feed*.
-Pulling everything would also flood the inbox, which works against GTD.
+**Why email to self is the main phone funnel.** Every app on iOS and
+Android has a share button, and Gmail is on every share sheet. That covers
+YouTube, X, podcast apps, the browser, Photos and Voice Memos. Nothing new
+has to be installed, it works the same on all three devices, and it
+supports attachments. Gmail's plus-addressing means no new account: mail to
+`you+gtd@gmail.com` arrives in your own mailbox. The sync recognizes it
+and turns it into the right kind of item:
+
+| What you send | Becomes |
+|---|---|
+| a single link (subject = page/video title) | url / youtube / twitter / podcast item, titled by the subject |
+| text + link | link item with your text as the note |
+| attachments (screenshot, voice memo, PDF) | one image / audio / file item each, your text as the note |
+| a forwarded email | email item keeping the **original** sender and subject; what you wrote above it is the note |
+| anything else | text item (dictation, pasted WhatsApp conversation, …) |
+
+A Telegram bot is still an option later, mainly for voice notes with a
+reply confirmation. It needs another app, so it is not the default.
+
+### Gmail capture rules (the "priority filter")
+
+`$GTD_HOME/rules.yaml` decides which mail **enters** the inbox and attaches
+*hints*. It does not make GTD decisions; those stay in Step 2.
+
+* Precedence: mail to the capture address is always captured, your own sent
+  mail is always ignored, then user rules run (first match wins), then
+  `default` (`skip`).
+* Conditions: `from`, `to`, `subject`, `body`, `text`, `domain`, `channel`,
+  `label`, `newsletter`, `has_attachment`. Plain strings match as
+  substrings, `/regex/` as regular expressions, and lists match any entry.
+* Actions: `capture` or `skip`, plus `priority`, `area` and `tags` hints, and
+  `gmail_label` to also label the message in Gmail (this works together
+  with `skip`, e.g. "label as Receipts, don't capture").
+* Hints are stored as `hints: {priority, area, rule}` in the front matter.
+  The views show ❗ for high priority. Priority does **not** reorder the
+  inbox: in GTD you process the inbox top to bottom.
+* Safe to experiment: `gtd gmail sync --dry-run` prints the decision for
+  every new message and changes nothing.
+
+Transport: IMAP with a Gmail **app password** (standard library only, no
+Google Cloud project). It searches *All Mail*, so a Gmail filter that
+archives your capture mail still gets picked up. Messages are read with
+`BODY.PEEK`, so they are not marked read, and captured ones get the Gmail
+label `GTD/Captured`. If Google ever blocks app passwords on the account,
+the fallback is the Gmail API with OAuth; only `GmailIMAP` would change.
 
 ---
 
@@ -217,22 +251,39 @@ time spent in the inbox, inbox-zero streaks, and completion rate.
 
 | Milestone | Scope | Status |
 |---|---|---|
-| **M1 — Core** | item model, file store, event log, dedupe; adapters: text, url (with youtube/twitter/podcast detection), file, `.eml`; `gtd capture / ls / show / render` | ✅ this commit |
+| **M1 — Core** | item model, file store, event log, dedupe; adapters: text, url (with youtube/twitter/podcast detection), file, `.eml`; `gtd capture / ls / show / render` | ✅ |
+| **M1.5 — Across devices** | private data repo + `gtd init / sync`; email-to-self funnel; Gmail rules + IMAP sync; scheduled GitHub Action | ✅ |
 | M2 — Enrichment | `gtd enrich`: fetch + readable text for articles, YouTube transcripts, OCR/vision for images, LLM title+summary | next |
-| M3 — Funnels | Gmail label sync (Gmail API), drop-folder ingest, Telegram bot | |
+| M3 — More funnels | drop-folder ingest, Telegram bot (optional) | |
 | M4 — Audio | Whisper for podcasts and voice memos | |
 | M5 — Index | SQLite index + `inbox.html` search/filters (feeds Step 3) | |
 
 Step 2 then reads `status: inbox` items and writes `kind` / `decision`
 into the front matter, logging a `clarified` event.
 
-## 8. Open questions for you
+## 8. Decisions
 
-1. **Where should the data live?** A local folder synced by iCloud or Dropbox
-   (simple, private), or a private git repo (history, works well with Claude
-   sessions)?
-2. **Main phone funnel?** Telegram bot, iOS Shortcut, or email forward?
-3. **Gmail:** a dedicated label you apply by hand (recommended, deliberate), or
-   rules that auto-capture certain senders?
-4. **Work vs life:** one inbox with a `context: work|life` tag (GTD
-   recommends one inbox), or two separate stores?
+| Question | Decision | Why |
+|---|---|---|
+| Where does the data live? | A **private GitHub repo** (`gtd-inbox`), separate from this public code repo | Works on laptop (git clone), iPhone and Android (the GitHub app renders `INBOX.md`), and in Claude sessions on any device. Full history. Free scheduled jobs (Actions). The code repo is public, so personal data must never go in it. |
+| Main phone funnel? | **Email to self** (`you+gtd@gmail.com`) | Built into every share sheet on iOS and Android, nothing new to install, handles attachments. See §3. |
+| Gmail | **Rules file** (`rules.yaml`) applied by a sync job every 30 min | Rules you can read and change, with a dry run to try them. It runs in the cloud, so it works while your laptop is off. |
+| Work vs life | **One inbox** (GTD: one collection system for everything). Rules may add an optional `area: work/life` *hint*; nothing is required at capture | Sorting at capture time adds friction, which is exactly what GTD's capture step avoids. Contexts and areas are Step 2's job. |
+
+### How the devices share one inbox
+
+```
+ iPhone / Android ──share→ Gmail (+gtd) ─┐
+ Gmail (rules.yaml)  ─────────────────────┤  GitHub Action, every 30 min:
+                                          ├─▶ gtd gmail sync → gtd sync ──┐
+ laptop: gtd capture … ; gtd sync ────────┼───────────────────────────────┤
+ Claude (any device): "add to my inbox"───┘                               ▼
+                                                              private repo gtd-inbox
+                                                   stuff/…  events.jsonl  INBOX.md ← read on any phone
+```
+
+Git conflicts are designed out:
+* every item is its own folder;
+* `events.jsonl` uses git's `union` merge, so appends from different devices are all kept;
+* `INBOX.md` is never merged: it is re-rendered after every pull and uses
+  absolute dates, so it only changes when items do.

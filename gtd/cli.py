@@ -7,14 +7,18 @@
   gtd ls
   gtd show 20260928T1430
   gtd render            # writes INBOX.md and inbox.html into $GTD_HOME
+  gtd gmail sync --dry-run
+  gtd sync              # share with your other devices (private git repo)
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-from . import adapters, render
+from . import adapters, datarepo, render
+from .rules import Rules
 from .store import Store
 
 
@@ -54,6 +58,38 @@ def cmd_render(store: Store, a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gmail_sync(store: Store, a: argparse.Namespace) -> int:
+    from .gmail import GmailIMAP, sync
+
+    address = os.environ.get("GMAIL_ADDRESS")
+    password = os.environ.get("GMAIL_APP_PASSWORD")
+    if not (address and password):
+        print("error: set GMAIL_ADDRESS and GMAIL_APP_PASSWORD", file=sys.stderr)
+        return 1
+    rules = Rules.load(store.home / "rules.yaml")
+    box = GmailIMAP(address, password)
+    try:
+        report = sync(store, rules, box, dry_run=a.dry_run, since_days=a.since_days)
+    finally:
+        box.close()
+    title = "Gmail (dry run — nothing saved)" if a.dry_run else "Gmail"
+    print(f"{title}: {len(report)} new message(s)")
+    print("\n".join(report))
+    return 0
+
+
+def cmd_init(store: Store, a: argparse.Namespace) -> int:
+    written = datarepo.init(store.home)
+    print(f"Initialised {store.home}: {', '.join(written) or 'nothing to do'}")
+    print("Next: edit rules.yaml, then `gtd sync`.")
+    return 0
+
+
+def cmd_sync(store: Store, a: argparse.Namespace) -> int:
+    print(datarepo.sync(store, a.message))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="gtd", description="Capture everything into one inbox.")
     p.add_argument("--home", help="data directory (default $GTD_HOME or ~/gtd-data)")
@@ -80,10 +116,23 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("-o", "--out", help="output directory (default $GTD_HOME)")
     r.set_defaults(fn=cmd_render)
 
+    g = sub.add_parser("gmail", help="Gmail funnel").add_subparsers(dest="gcmd", required=True)
+    gs = g.add_parser("sync", help="pull new mail through rules.yaml into the inbox")
+    gs.add_argument("--dry-run", action="store_true", help="show decisions, change nothing")
+    gs.add_argument("--since-days", type=int, default=2, help="look back this far (default 2)")
+    gs.set_defaults(fn=cmd_gmail_sync)
+
+    i = sub.add_parser("init", help="scaffold the data repo ($GTD_HOME or --home)")
+    i.set_defaults(fn=cmd_init)
+
+    y = sub.add_parser("sync", help="commit, pull, re-render INBOX.md, push")
+    y.add_argument("-m", "--message", default="capture")
+    y.set_defaults(fn=cmd_sync)
+
     a = p.parse_args(argv)
     try:
         return a.fn(Store(a.home), a)
-    except KeyError as e:
+    except (KeyError, RuntimeError, ValueError) as e:
         print(f"error: {e.args[0]}", file=sys.stderr)
         return 1
 

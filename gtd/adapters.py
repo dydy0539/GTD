@@ -6,6 +6,7 @@ Adapters must be fast and offline — no network calls. Anything slow
 from __future__ import annotations
 
 import email
+import html
 import email.policy
 import hashlib
 import mimetypes
@@ -110,33 +111,53 @@ def from_file(path: Path, *, via: str = "cli", note: str = "", title: str | None
     )
 
 
+def _plain_body(msg) -> str:
+    part = msg.get_body(preferencelist=("plain", "html"))
+    if part is None:
+        return ""
+    body = part.get_content()
+    if part.get_content_type() == "text/html":
+        body = re.sub(r"(?is)<(style|script)[^>]*>.*?</\1>", " ", body)
+        body = re.sub(r"(?i)<br\s*/?>|</p>|</div>", "\n", body)
+        body = html.unescape(re.sub(r"<[^>]+>", " ", body))
+        body = re.sub(r"[ \t]+", " ", body)
+    return body.strip()
+
+
+def _attachments(msg) -> dict[str, bytes]:
+    out = {}
+    for part in msg.iter_attachments():
+        name = part.get_filename()
+        if name:
+            out[name] = part.get_payload(decode=True) or b""
+    return out
+
+
 def from_eml(raw: bytes, *, via: str = "cli", note: str = "",
              keep_file: Path | None = None, title: str | None = None) -> Item:
     """Parse an RFC 822 message (Gmail 'Download message', forwards, exports)."""
     msg = email.message_from_bytes(raw, policy=email.policy.default)
-    body_part = msg.get_body(preferencelist=("plain", "html"))
-    body = body_part.get_content() if body_part else ""
-    if body_part is not None and body_part.get_content_type() == "text/html":
-        body = re.sub(r"<[^>]+>", " ", body)
-        body = re.sub(r"[ \t]+", " ", body)
     source = {
         "from": str(msg.get("From", "")),
         "to": str(msg.get("To", "")),
+        "cc": str(msg.get("Cc", "")),
         "subject": str(msg.get("Subject", "")),
-        "message_id": str(msg.get("Message-ID", "")).strip("<>"),
+        "message_id": str(msg.get("Message-ID", "")).strip().strip("<>"),
     }
     if msg.get("Date"):
         try:
             source["sent_at"] = parsedate_to_datetime(msg["Date"]).isoformat()
         except (TypeError, ValueError):
             pass
-    attachments = [p.get_filename() for p in msg.iter_attachments() if p.get_filename()]
+    if msg.get("List-Unsubscribe") or msg.get("List-Id"):
+        source["newsletter"] = True
+    attachments = list(_attachments(msg))
     if attachments:
         source["email_attachments"] = attachments
     item = Item(
         channel="email",
         title=title or source["subject"] or "(no subject)",
-        content=body.strip(),
+        content=_plain_body(msg),
         via=via,
         note=note,
         source={k: v for k, v in source.items() if v},
@@ -146,6 +167,88 @@ def from_eml(raw: bytes, *, via: str = "cli", note: str = "",
     if keep_file:
         item.attachments.append(keep_file.name)
     return item
+
+
+# ---------- email-to-self: the phone funnel ----------
+URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
+BOILERPLATE = re.compile(
+    r"(?im)^\s*(sent from my .*|sent from gmail.*|sent from (yahoo )?mail for .*|"
+    r"get outlook for .*|sent via .*)\s*$"
+)
+FORWARD_MARK = re.compile(r"(?m)^-{5,} ?Forwarded message ?-{5,}\s*$|^Begin forwarded message:\s*$")
+SUBJECT_PREFIX = re.compile(r"(?i)^\s*((fwd?|fw|re)\s*:\s*)+")
+
+
+def _clean(text: str) -> str:
+    text = text.split("\n-- \n", 1)[0]  # signature
+    return BOILERPLATE.sub("", text).strip()
+
+
+def from_self_email(raw: bytes, *, via: str = "email-to-self") -> list[tuple[Item, dict[str, bytes]]]:
+    """Mail you sent to your capture address → inbox items.
+
+    Share-sheet mail from phones is turned into what it really is:
+      forwarded email → email item (original sender kept), note = what you wrote above it
+      attachments     → one image/audio/file item each (screenshots, voice memos, PDFs)
+      a single link   → url/youtube/twitter/podcast item, title = subject
+      anything else   → text item (dictation, notes, pasted messenger conversations)
+    Returns (item, attachment blobs) pairs; empty mail returns [].
+    """
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    subject = SUBJECT_PREFIX.sub("", str(msg.get("Subject", ""))).strip()
+    body = _clean(_plain_body(msg))
+    blobs = _attachments(msg)
+
+    fwd = FORWARD_MARK.search(body)
+    if fwd:
+        note, fwd_text = body[: fwd.start()].strip(), body[fwd.end():].strip()
+        headers, lines = {}, fwd_text.splitlines()
+        while lines and (m := re.match(r"^(From|Date|Subject|To|Cc|Reply-To):\s*(.*)$", lines[0])):
+            headers[m.group(1).lower()] = m.group(2).strip()
+            lines.pop(0)
+        content = "\n".join(lines).strip()
+        item = Item(
+            channel="email",
+            title=headers.get("subject") or subject or "(forwarded email)",
+            content=content,
+            via=via,
+            note=note,
+            source={k: v for k, v in {
+                "from": headers.get("from"), "to": headers.get("to"),
+                "subject": headers.get("subject"), "sent_at_text": headers.get("date"),
+                "forwarded": True,
+            }.items() if v},
+            content_hash=sha256(" ".join(content.split()).lower()),
+            enrichment="n/a",
+        )
+        return [(item, blobs)]
+
+    if blobs:
+        out = []
+        for name, data in blobs.items():
+            mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+            out.append((Item(
+                channel={"image": "image", "audio": "audio"}.get(mime.split("/")[0], "file"),
+                title=subject if (subject and len(blobs) == 1) else name,
+                content=f"[{mime}] see attachments/{name}",
+                via=via,
+                note=body,
+                source={"filename": name, "mime": mime},
+                content_hash=sha256(data),
+                enrichment="pending",
+            ), {name: data}))
+        return out
+
+    urls = URL_RE.findall(body)
+    if len(urls) == 1:
+        rest = body.replace(urls[0], "").strip()
+        if rest == subject:
+            rest = ""
+        return [(from_url(urls[0], via=via, note=rest, title=subject or None), {})]
+
+    if not body and not subject:
+        return []
+    return [(from_text(body or subject, via=via, title=subject or None), {})]
 
 
 def from_any(value: str, **kw) -> tuple[Item, list[Path]]:
