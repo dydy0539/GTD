@@ -303,9 +303,13 @@ class TelegramTest(unittest.TestCase):
             self.assertEqual(sum(t.startswith("✓ Captured") for t in fake.sent), 5)
             self.assertEqual(fake.confirmed, 8)
 
-            fake.updates.append(tg(8, 42, text="call the dentist"))
+            fake.updates.append(tg(9, 42, text="Lunch tomorrow 12pm\nLocation: Lau Pa Sat, Singapore"))
             sync(store, api)
-            self.assertEqual(len(list(store.items())), 5)
+            self.assertIn("Add to calendar: https://calendar.google.com", fake.sent[-1])
+
+            fake.updates.append(tg(10, 42, text="call the dentist"))
+            sync(store, api)
+            self.assertEqual(len(list(store.items())), 6)
             self.assertTrue(fake.sent[-1].startswith("↺ Already"))
 
 

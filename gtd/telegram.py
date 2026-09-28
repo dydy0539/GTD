@@ -21,6 +21,7 @@ from typing import Any, Callable
 from urllib.request import Request, urlopen
 
 from . import adapters
+from .gcal import add_link, event_for
 from .model import Item
 from .store import Store
 
@@ -159,8 +160,13 @@ def sync(store: Store, api: TelegramAPI, *, dry_run: bool = False) -> list[str]:
         for item, blobs in message_to_items(msg, api):
             if not dry_run:
                 item, created = store.add(item, blobs=blobs)
-                api.reply(msg["chat"]["id"], f"✓ Captured: {item.title}" if created
-                          else f"↺ Already in your inbox: {item.title}")
+                text = (f"✓ Captured: {item.title}" if created
+                        else f"↺ Already in your inbox: {item.title}")
+                event = event_for(item) if created else None
+                if event:
+                    when_ = datetime.fromisoformat(event["start"]).strftime("%a %d %b %H:%M")
+                    text += f"\n📅 {when_} · {event['location'][:60]}\nAdd to calendar: {add_link(event)}"
+                api.reply(msg["chat"]["id"], text)
             report.append(f"  capture  {item.icon} {item.title[:60]}")
 
     if not dry_run:
