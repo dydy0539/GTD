@@ -117,6 +117,37 @@ def cmd_enrich(store: Store, a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run(store: Store, a: argparse.Namespace) -> int:
+    """Everything the scheduled job does, so the workflow file never has to change.
+
+    Each funnel runs only when it is configured; one failing funnel doesn't stop
+    the others, and whatever was captured is always synced. Exit code 1 if any step failed.
+    """
+    steps = []
+    if os.environ.get("GMAIL_APP_PASSWORD"):
+        steps.append(("Gmail", cmd_gmail_sync, argparse.Namespace(dry_run=False, since_days=2)))
+    if os.environ.get("TELEGRAM_BOT_TOKEN"):
+        steps.append(("Telegram", cmd_telegram_sync, argparse.Namespace(dry_run=False)))
+    if (store.home / "feeds.yaml").exists():
+        steps.append(("Feeds", cmd_feeds_sync, argparse.Namespace(dry_run=False)))
+    steps.append(("Enrich", cmd_enrich, a))
+    failed = []
+    for name, fn, args in steps:
+        print(f"── {name}")
+        try:
+            if fn(store, args):
+                failed.append(name)
+        except Exception as e:  # keep going: the other funnels and the sync must still happen
+            print(f"error in {name}: {type(e).__name__}: {e}", file=sys.stderr)
+            failed.append(name)
+    if a.sync:
+        print("── Sync")
+        print(datarepo.sync(store, "capture"))
+    if failed:
+        print(f"failed: {', '.join(failed)}", file=sys.stderr)
+    return 1 if failed else 0
+
+
 def cmd_init(store: Store, a: argparse.Namespace) -> int:
     written = datarepo.init(store.home)
     print(f"Initialised {store.home}: {', '.join(written) or 'nothing to do'}")
@@ -176,6 +207,10 @@ def main(argv: list[str] | None = None) -> int:
 
     e = sub.add_parser("enrich", help="link titles, screenshots, priority markers, calendar events")
     e.set_defaults(fn=cmd_enrich)
+
+    run = sub.add_parser("run", help="all funnels + enrich (+ --sync): what the scheduled job runs")
+    run.add_argument("--sync", action="store_true", help="commit and push afterwards")
+    run.set_defaults(fn=cmd_run)
 
     i = sub.add_parser("init", help="scaffold the data repo ($GTD_HOME or --home)")
     i.set_defaults(fn=cmd_init)

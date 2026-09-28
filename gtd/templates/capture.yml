@@ -1,15 +1,14 @@
-# Pulls new stuff into this inbox repo every 30 minutes (~1,440 Actions
-# minutes/month, inside the 2,000 free minutes private repos get).
-# Run it by hand any time from the Actions tab.
+# Pulls new stuff into this inbox every 30 minutes (~1,440 Actions minutes/month,
+# inside the 2,000 free minutes private repos get). Run it by hand any time from the Actions tab.
 #
-# Secrets (Settings → Secrets and variables → Actions). Each funnel runs only
-# once its secret exists:
+# All the logic lives in `gtd run`, so this file never needs to change when features are added.
+# Secrets (Settings → Secrets and variables → Actions); each part runs only once its secret exists:
 #   GMAIL_ADDRESS, GMAIL_APP_PASSWORD   Gmail (app password from myaccount.google.com/apppasswords)
 #   TELEGRAM_BOT_TOKEN                  Telegram bot (token from @BotFather)
-#   ANTHROPIC_API_KEY                   optional: read screenshots with Claude (console.anthropic.com)
+#   ANTHROPIC_API_KEY                   optional: read screenshots with Claude
 #   GOOGLE_SERVICE_ACCOUNT_JSON,
 #   GOOGLE_CALENDAR_ID                  optional: add appointments to Google Calendar automatically
-# Optional variable:  TZ  e.g. America/New_York (used for INBOX.md dates)
+# Optional variable:  TZ  e.g. Asia/Tokyo (used for dates)
 name: capture
 on:
   # :07 and :37, not :00/:30: GitHub delays or drops scheduled runs at busy on-the-hour times
@@ -35,22 +34,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install --quiet "gtd[vision,calendar] @ git+https://github.com/dydy0539/GTD"
-      - name: Pull Gmail
-        if: env.GMAIL_APP_PASSWORD != ''
-        run: gtd gmail sync
-      - name: Pull Telegram
-        if: always() && env.TELEGRAM_BOT_TOKEN != ''
-        run: gtd telegram sync
-      - name: Pull YouTube channels, podcasts, blogs
-        if: always() && hashFiles('feeds.yaml') != ''
-        run: gtd feeds sync
-      - name: Titles, screenshots, priority markers, calendar events
-        if: always()
-        continue-on-error: true
-        run: gtd enrich
-      - name: Commit and push
-        if: always()
+      - name: Capture everything
         run: |
           git config user.name "gtd-bot"
           git config user.email "gtd-bot@users.noreply.github.com"
-          gtd sync -m "capture"
+          gtd run --sync
