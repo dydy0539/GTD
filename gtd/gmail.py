@@ -2,8 +2,11 @@
 
 Uses Gmail's IMAP extensions (X-GM-RAW search, X-GM-LABELS) with an app
 password, so it needs only the standard library, not a Google Cloud project.
-Mail is read with BODY.PEEK so nothing gets marked as read. Captured messages
-get the Gmail label "GTD/Captured" so you can see in Gmail what went in.
+
+Read-only by default: the mailbox is opened with EXAMINE (the server refuses
+any change) and mail is read with BODY.PEEK, so nothing is marked read,
+labelled, moved or deleted. With `gmail_write: true` in rules.yaml, captured
+messages get the label "GTD/Captured" and rules may add their `gmail_label`.
 
 Progress is tracked by IMAP UID in $GTD_HOME/state/gmail.json.
 """
@@ -54,10 +57,12 @@ def parse_fetch_meta(meta: str) -> tuple[list[str], str]:
 class GmailIMAP:
     """Real mailbox. Searches "All Mail" so filters that skip the inbox still work."""
 
-    def __init__(self, address: str, app_password: str, host: str = "imap.gmail.com") -> None:
+    def __init__(self, address: str, app_password: str, host: str = "imap.gmail.com",
+                 readonly: bool = True) -> None:
+        self.readonly = readonly
         self.imap = imaplib.IMAP4_SSL(host)
         self.imap.login(address, app_password.replace(" ", ""))
-        self.imap.select(f'"{self._all_mail()}"')
+        self.imap.select(f'"{self._all_mail()}"', readonly=readonly)
         self.uidvalidity = int(self.imap.response("UIDVALIDITY")[1][0])
         self._labels_created: set[str] = set()
 
@@ -85,6 +90,8 @@ class GmailIMAP:
         return mails
 
     def add_label(self, uid: int, label: str) -> None:
+        if self.readonly:
+            raise RuntimeError("mailbox is read-only")
         if label not in self._labels_created:
             self.imap.create(f'"{label}"')  # fails harmlessly if it exists
             self._labels_created.add(label)
@@ -136,7 +143,7 @@ def sync(store: Store, rules: Rules, mailbox: Mailbox, *, dry_run: bool = False,
             flag = " ❗" if decision.priority == "high" else ""
             report.append(f"  capture  {item.icon} {subject}{flag}  ({decision.rule})")
 
-        if not dry_run:
+        if not dry_run and rules.gmail_write:
             if decision.action != "skip":
                 mailbox.add_label(mail.uid, CAPTURED_LABEL)
             if decision.gmail_label:

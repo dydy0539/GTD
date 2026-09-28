@@ -7,6 +7,7 @@ that the decision engine can use later. Rules live in $GTD_HOME/rules.yaml:
     me: [you@gmail.com]                 # your own addresses
     capture_address: you+gtd@gmail.com  # "email to self" funnel, always captured
     default: skip                       # mail no rule matches: skip | capture
+    gmail_write: false                  # true = allow adding Gmail labels
     rules:                              # first match wins, top to bottom
       - name: Boss
         when: {from: boss@work.com}
@@ -86,6 +87,8 @@ class Rules:
         self.me = [m.lower() for m in ([me] if isinstance(me, str) else me) if m]
         self.capture_address = (cfg.get("capture_address") or self._default_capture()).lower()
         self.default = cfg.get("default", "skip")
+        # Never change anything in Gmail unless explicitly allowed
+        self.gmail_write = bool(cfg.get("gmail_write", False))
         self.rules = cfg.get("rules") or []
         for r in self.rules:
             bad = (set(r.get("when", {})) - set(CONDITIONS)) | (set(r.get("then", {})) - ACTIONS)

@@ -69,7 +69,7 @@ def cmd_gmail_sync(store: Store, a: argparse.Namespace) -> int:
         print("error: set GMAIL_ADDRESS and GMAIL_APP_PASSWORD", file=sys.stderr)
         return 1
     rules = Rules.load(store.home / "rules.yaml")
-    box = GmailIMAP(address, password)
+    box = GmailIMAP(address, password, readonly=not rules.gmail_write)
     try:
         report = sync(store, rules, box, dry_run=a.dry_run, since_days=a.since_days)
     finally:

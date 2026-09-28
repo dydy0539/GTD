@@ -17,11 +17,13 @@
 #   priority: high | normal | low (a hint for the decision engine)
 #   area: work | life             (a hint; GTD keeps ONE inbox for both)
 #   tags: [..]
-#   gmail_label: "Some/Label"     also label it in Gmail (works with skip too)
+#   gmail_label: "Some/Label"     also label it in Gmail (needs gmail_write: true)
 
 me: [you@gmail.com]                    # your address(es); your own sent mail is ignored
 capture_address: you+gtd@gmail.com     # email-to-self funnel — always captured
 default: skip                          # mail no rule matches stays in Gmail only
+gmail_write: false                     # read-only: never mark read, label, move or delete.
+                                       # true = add "GTD/Captured" + rules' gmail_label in Gmail
 
 rules:                                 # first match wins, top to bottom
   # --- people who matter: always capture, flag high -----------------------

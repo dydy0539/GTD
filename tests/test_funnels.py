@@ -27,6 +27,7 @@ def mail(frm, to, subject, body="", *, attach=None, newsletter=False, msgid=None
 
 RULES = Rules({
     "me": [ME],
+    "gmail_write": True,
     "capture_address": CAPTURE,
     "default": "skip",
     "rules": [
@@ -142,6 +143,17 @@ class GmailSyncTest(unittest.TestCase):
         report = sync(self.store, RULES, box)
         self.assertEqual(len(report), 1)
         self.assertEqual(len(list(self.store.items())), 3)
+
+    def test_read_only_by_default(self):
+        rules = Rules({"me": [ME], "capture_address": CAPTURE,
+                       "rules": [{"name": "Boss", "when": {"from": "boss@work.com"},
+                                  "then": {"gmail_label": "VIP"}}]})
+        self.assertFalse(rules.gmail_write)
+        box = FakeMailbox([Mail(1, mail("boss@work.com", ME, "Q4 plan")),
+                           Mail(2, mail(ME, CAPTURE, "note", "buy milk"))])
+        sync(self.store, rules, box)
+        self.assertEqual(len(list(self.store.items())), 2)
+        self.assertEqual(box.labels, [])  # Gmail untouched
 
     def test_parse_fetch_meta(self):
         labels, thrid = parse_fetch_meta(
