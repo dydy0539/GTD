@@ -27,7 +27,7 @@ def _record(i: Item) -> dict:
         who = src.get("author") or src.get("site") or src.get("forwarded_from") or ""
     snippet = i.summary or (i.content if i.channel in ("text", "message", "email") else "")
     snippet = " ".join(re.sub(r"<[^>]+>", " ", snippet).split())
-    snippet = re.sub(r"^(View (this post|in browser)[^h]*https?://\S+\s*|View in browser\s*\|?\s*)", "", snippet, flags=re.I)
+    snippet = re.sub(r"^(View this post on the web at\s+\S+\s*|View in browser\s*\|?\s*)", "", snippet, flags=re.I)
     title = cal["summary"] if cal and cal.get("summary") else i.title
     if snippet.lower().startswith(i.title.lower()[:40]):  # preview that only repeats the title
         snippet = snippet[len(i.title):].strip(" .·-—:") if len(snippet) > len(i.title) + 20 else ""
