@@ -31,7 +31,7 @@ if [ -n "${2:-}" ]; then
 fi
 
 mkdir -p "$OUT"
-python3 -m gtd.cli render -o "$OUT" --page "$OUT/gtd-in-tray.html" | sed 's/.*(\(.*\))/\1 on the page/'
+python3 -m gtd.cli render -o "$OUT" --page "$OUT/gtd-in-tray.html" | sed 's/.*(\(.*\) items)/\1 in the in-tray/'
 python3 - "$OUT" <<'PY'
 import hashlib, json, re, sys
 from pathlib import Path
