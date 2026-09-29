@@ -12,6 +12,7 @@
   gtd feeds sync        # new YouTube videos / podcast episodes / blog posts
   gtd enrich            # real titles for captured links
   gtd decide 20260928T1430 trash       # or later / reference / inbox
+  gtd decide 20260928T1930 reference --project "Study Transformer"
   gtd decide decisions.json            # choices made on the In-tray page
   gtd sync              # share with your other devices (private git repo)
 """
@@ -73,7 +74,7 @@ def cmd_decide(store: Store, a: argparse.Namespace) -> int:
     from .decide import apply
 
     if a.decision:
-        decisions = [{"id": a.target, "decision": a.decision}]
+        decisions = [{"id": a.target, "decision": a.decision, "project": a.project, "note": a.note}]
     else:
         decisions = json.loads(Path(a.target).read_text(encoding="utf-8"))
     report = apply(store, decisions)
@@ -212,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("decide", help="trash / review later / archive items (or move them back)")
     d.add_argument("target", help="item id, or a JSON file of decisions from the In-tray page")
     d.add_argument("decision", nargs="?", choices=["trash", "later", "reference", "inbox"])
+    d.add_argument("--project", help="file it under a project (adds a project:<name> tag)")
+    d.add_argument("--note", help="append a note, e.g. why it's kept")
     d.set_defaults(fn=cmd_decide)
 
     g = sub.add_parser("gmail", help="Gmail funnel").add_subparsers(dest="gcmd", required=True)

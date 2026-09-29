@@ -17,9 +17,14 @@ DECISIONS = {
 }
 
 
+def project_tag(name: str) -> str:
+    return "project:" + "-".join(name.lower().split())
+
+
 def apply(store: Store, decisions) -> list[str]:
     """`decisions`: {id: "trash"} / {id: {"decision": "trash", "at": ...}} or a list of
-    {"id": ..., "decision": ...}. Unknown ids and values are reported, not fatal."""
+    {"id": ..., "decision": ..., "project": ..., "note": ...}; a project adds a
+    "project:<name>" tag, a note is appended. Unknown ids and values are reported, not fatal."""
     if isinstance(decisions, dict):
         decisions = [{"id": k, **(v if isinstance(v, dict) else {"decision": v})} for k, v in decisions.items()]
     report = []
@@ -33,10 +38,18 @@ def apply(store: Store, decisions) -> list[str]:
         except KeyError:
             report.append(f"  ? {item_id}: no such item")
             continue
-        if item.status == choice:
+        extra = {}
+        if d.get("project") and project_tag(d["project"]) not in item.tags:
+            item.tags = [*item.tags, project_tag(d["project"])]
+            extra["project"] = d["project"]
+        if d.get("note") and d["note"] not in item.note:
+            item.note = f"{item.note}\n{d['note']}".strip()
+            extra["note"] = d["note"]
+        if item.status == choice and not extra:
             continue
         before, item.status = item.status, choice
         store.save(item)
-        store.log("decided", item.id, decision=choice, previous=before, **({"at": d["at"]} if d.get("at") else {}))
+        store.log("decided", item.id, decision=choice, previous=before, **extra,
+                  **({"at": d["at"]} if d.get("at") else {}))
         report.append(f"  ✓ {DECISIONS[choice]:<20} {item.title}"[:120])
     return report

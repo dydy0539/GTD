@@ -628,6 +628,12 @@ class DecideTest(unittest.TestCase):
             self.assertEqual(apply(store, [{"id": b.id, "decision": "later"}]), [])  # already applied
             self.assertIn("decided", [e["event"] for e in store.events()])
 
+            cli.main(["--home", tmp, "decide", b.id, "reference", "--project", "Study Transformer",
+                      "--note", "study material"])
+            b2 = store.get(b.id)
+            self.assertEqual((b2.status, b2.tags[-1], b2.note), ("reference", "project:study-transformer", "study material"))
+            cli.main(["--home", tmp, "decide", b.id, "later"])
+
             cli.main(["--home", tmp, "decide", c.id, "inbox"])
             self.assertEqual([i.id for i in store.items()], [c.id])
 
