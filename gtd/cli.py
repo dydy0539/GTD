@@ -11,6 +11,8 @@
   gtd telegram sync
   gtd feeds sync        # new YouTube videos / podcast episodes / blog posts
   gtd enrich            # real titles for captured links
+  gtd decide 20260928T1430 trash       # or later / reference / inbox
+  gtd decide decisions.json            # choices made on the In-tray page
   gtd sync              # share with your other devices (private git repo)
 """
 from __future__ import annotations
@@ -59,8 +61,24 @@ def cmd_render(store: Store, a: argparse.Namespace) -> int:
     from . import site
     (out / "inbox.html").write_text(site.document(items), encoding="utf-8")
     if a.page:  # body only, for hosts that add the document skeleton (claude.ai pages)
-        Path(a.page).write_text(site.page(items), encoding="utf-8")
+        kept = [i for i in store.items(status=None) if i.status in site.SHOWN]
+        Path(a.page).write_text(site.page(kept), encoding="utf-8")
     print(f"Wrote {out / 'INBOX.md'} and {out / 'inbox.html'} ({len(items)} items)")
+    return 0
+
+
+def cmd_decide(store: Store, a: argparse.Namespace) -> int:
+    import json
+
+    from .decide import apply
+
+    if a.decision:
+        decisions = [{"id": a.target, "decision": a.decision}]
+    else:
+        decisions = json.loads(Path(a.target).read_text(encoding="utf-8"))
+    report = apply(store, decisions)
+    print(f"Decided {sum(l.lstrip().startswith('✓') for l in report)} item(s)")
+    print("\n".join(report))
     return 0
 
 
@@ -190,6 +208,11 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("-o", "--out", help="output directory (default $GTD_HOME)")
     r.add_argument("--page", help="also write the page body (no <html> skeleton) to this file")
     r.set_defaults(fn=cmd_render)
+
+    d = sub.add_parser("decide", help="trash / review later / archive items (or move them back)")
+    d.add_argument("target", help="item id, or a JSON file of decisions from the In-tray page")
+    d.add_argument("decision", nargs="?", choices=["trash", "later", "reference", "inbox"])
+    d.set_defaults(fn=cmd_decide)
 
     g = sub.add_parser("gmail", help="Gmail funnel").add_subparsers(dest="gcmd", required=True)
     gs = g.add_parser("sync", help="pull new mail through rules.yaml into the inbox")

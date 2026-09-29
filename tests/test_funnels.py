@@ -609,6 +609,36 @@ class SiteTest(unittest.TestCase):
             self.assertTrue(site.document([]).startswith("<!doctype html>"))
 
 
+class DecideTest(unittest.TestCase):
+    def test_apply_page_decisions(self):
+        from gtd import cli, site
+        from gtd.decide import apply
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            a, _ = store.add(adapters.from_text("junk", via="telegram"))
+            b, _ = store.add(adapters.from_text("read this someday", via="telegram"))
+            c, _ = store.add(adapters.from_text("wifi password is hunter2", via="telegram"))
+            report = apply(store, {a.id: {"decision": "trash", "at": "2026-09-29T08:00:00Z"},
+                                   b.id: "later", c.id: {"decision": "reference"},
+                                   "nope": "trash", c.id[:-1] + "x": "shred"})
+            self.assertEqual(sum(l.lstrip().startswith("✓") for l in report), 3)
+            self.assertEqual(sum(l.lstrip().startswith("?") for l in report), 2)
+            self.assertEqual(list(store.items()), [])
+            self.assertEqual(store.get(b.id).status, "later")
+            self.assertEqual(apply(store, [{"id": b.id, "decision": "later"}]), [])  # already applied
+            self.assertIn("decided", [e["event"] for e in store.events()])
+
+            cli.main(["--home", tmp, "decide", c.id, "inbox"])
+            self.assertEqual([i.id for i in store.items()], [c.id])
+
+            page = Path(tmp) / "page.html"
+            cli.main(["--home", tmp, "render", "--page", str(page)])
+            import json as _json, re as _re
+            data = _json.loads(_re.search(r'id="data">(.*?)</script>', page.read_text(), _re.S).group(1))
+            self.assertEqual({r["id"]: r["status"] for r in data["items"]}, {b.id: "later", c.id: "inbox"})
+            self.assertTrue(set(site.SHOWN) >= {"inbox", "later", "reference"})
+
+
 class TwoPhonesTest(unittest.TestCase):
     def test_link_second_account(self):
         import re as _re

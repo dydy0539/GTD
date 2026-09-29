@@ -17,6 +17,9 @@ SOURCES = {  # item.via → label shown in the filters
 }
 
 
+SHOWN = ("inbox", "later", "reference")  # statuses the page lists (trash stays out)
+
+
 def _record(i: Item) -> dict:
     hints = i.extra.get("hints") or {}
     cal = i.extra.get("calendar")
@@ -32,7 +35,7 @@ def _record(i: Item) -> dict:
     if snippet.lower().startswith(i.title.lower()[:40]):  # preview that only repeats the title
         snippet = snippet[len(i.title):].strip(" .·-—:") if len(snippet) > len(i.title) + 20 else ""
     return {
-        "id": i.id, "title": title, "icon": i.icon, "channel": i.channel,
+        "id": i.id, "status": i.status, "title": title, "icon": i.icon, "channel": i.channel,
         "via": i.via, "source": SOURCES.get(i.via, i.via),
         "url": src.get("url") or src.get("link") or "",
         "at": i.captured_at.isoformat(), "who": who[:80],
@@ -123,6 +126,24 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   background:var(--cal-soft);color:var(--cal);border-radius:6px;padding:6px 10px}
 .cal b{font-family:var(--mono);font-weight:500}
 .cal a{color:var(--cal);font-weight:600}
+.views{display:flex;gap:4px;flex-wrap:wrap}
+.views button{font:600 14px var(--sans);color:var(--muted);background:none;border:0;border-bottom:2px solid transparent;
+  padding:6px 10px;cursor:pointer}
+.views button[aria-pressed="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.views .n{font:12px var(--mono);color:var(--faint);margin-left:4px}
+.acts{grid-column:2/-1;display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.act{font:500 12px var(--sans);color:var(--muted);background:var(--ground);border:1px solid var(--line);
+  border-radius:6px;padding:4px 9px;cursor:pointer;min-height:28px}
+.act:hover{color:var(--ink);border-color:var(--faint)}
+.act.trash:hover{color:var(--high);border-color:var(--high)}
+.ro{font-size:13px;color:var(--muted)}
+.toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
+  z-index:5;display:flex;gap:12px;align-items:center;max-width:calc(100vw - 32px);
+  background:var(--ink);color:var(--ground);border-radius:8px;padding:10px 14px;font-size:14px;
+  box-shadow:0 6px 24px rgba(0,0,0,.18)}
+.toast[hidden]{display:none}
+.toast span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.toast button{font:600 14px var(--sans);color:var(--accent-soft);background:none;border:0;cursor:pointer;padding:0;flex:none}
 .empty{color:var(--muted);padding:28px 16px;text-align:center;background:var(--surface);border:1px dashed var(--line);border-radius:10px}
 @media (max-width:480px){.it{grid-template-columns:24px 1fr}.age{grid-column:2;text-align:left}}
 @media (prefers-reduced-motion:no-preference){.it{transition:background .15s}.it:hover{background:var(--ground)}}
@@ -134,6 +155,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     <div class="gen" id="gen"></div>
   </header>
   <div class="tools">
+    <nav class="views" id="views" aria-label="View"></nav>
     <div class="row1">
       <input id="q" type="search" placeholder="Search titles, senders, notes…" aria-label="Search">
       <div class="seg" role="group" aria-label="Group by">
@@ -144,15 +166,26 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   </div>
   <main id="out"></main>
 </div>
+<div class="toast" id="toast" role="status" hidden><span id="toast-msg"></span><button id="undo">Undo</button></div>
 <script type="application/json" id="data">__DATA__</script>
 <script>
-(function(){
+(async function(){
   const D = JSON.parse(document.getElementById('data').textContent);
-  const items = D.items;
+  const all = D.items;
   const NOW = Date.now();
   const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}},
                  set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
-  let group = store.get('gtd.group') || 'kind', source = '', q = '';
+  let group = store.get('gtd.group') || 'kind', source = '', q = '', view = 'inbox';
+
+  // Triage choices live in the page's database (decisions/<item id> = {decision, at});
+  // `gtd decide` later writes them into the items themselves.
+  const VIEWS = [['inbox','In-tray'], ['later','Review later'], ['reference','Archive'], ['trash','Trash']];
+  const ACTIONS = {trash:'🗑 Trash', later:'⏳ Review later', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
+  const DONE = {trash:'Moved to Trash', later:'Saved for review later', reference:'Archived for reference', inbox:'Back in the in-tray'};
+  const decided = {};
+  const statusOf = it => (decided[it.id] && decided[it.id].decision) || it.status;
+  let db = null;
+  try { db = window.claude && await window.claude.use('db'); } catch (e) { db = null; }
 
   const hrs = it => (NOW - Date.parse(it.at)) / 36e5;
   const age = h => h < 1 ? Math.max(1, Math.round(h*60)) + 'm' : h < 48 ? Math.round(h) + 'h' : Math.round(h/24) + 'd';
@@ -170,22 +203,36 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   ];
   const kindOf = it => KINDS.find(k => k[2](it))[0];
 
-  // summary strip
-  const oldest = items.reduce((m, it) => Math.max(m, hrs(it)), 0);
-  const stale = items.filter(it => hrs(it) > 48).length;
-  document.getElementById('sum').innerHTML =
-    `<span><b>${items.length}</b> in the tray</span>` +
-    (items.length ? `<span${oldest > 48 ? ' class="warn"' : ''}>oldest <b>${age(oldest)}</b></span>` : '') +
-    (stale ? `<span class="warn"><b>${stale}</b> waiting over 2 days</span>` : '') +
-    `<span><b>${items.filter(it => it.priority === 'high').length}</b> need attention</span>`;
   document.getElementById('gen').textContent =
-    'Updated ' + new Date(D.generated).toLocaleString(undefined, {weekday:'short', hour:'2-digit', minute:'2-digit'});
+    'Updated ' + new Date(D.generated).toLocaleString(undefined, {weekday:'short', hour:'2-digit', minute:'2-digit'}) +
+    (db ? '' : ' · read-only here: open it on claude.ai to sort items');
 
-  // source chips
-  const counts = {};
-  items.forEach(it => counts[it.source] = (counts[it.source] || 0) + 1);
+  function drawSummary(){
+    const items = all.filter(it => statusOf(it) === 'inbox');
+    const oldest = items.reduce((m, it) => Math.max(m, hrs(it)), 0);
+    const stale = items.filter(it => hrs(it) > 48).length;
+    document.getElementById('sum').innerHTML =
+      `<span><b>${items.length}</b> in the tray</span>` +
+      (items.length ? `<span${oldest > 48 ? ' class="warn"' : ''}>oldest <b>${age(oldest)}</b></span>` : '') +
+      (stale ? `<span class="warn"><b>${stale}</b> waiting over 2 days</span>` : '') +
+      `<span><b>${items.filter(it => it.priority === 'high').length}</b> need attention</span>`;
+    document.getElementById('views').innerHTML = VIEWS.map(([v, l]) => {
+      const n = all.filter(it => statusOf(it) === v).length;
+      return (v === 'trash' && !n && view !== 'trash') ? '' :
+        `<button data-v="${v}" aria-pressed="${v === view}">${l}<span class="n">${n}</span></button>`;
+    }).join('');
+  }
+  document.getElementById('views').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return; view = b.dataset.v; source = ''; render();
+  });
+
   const chips = document.getElementById('chips');
+  let counts = {};
   function drawChips(){
+    counts = {};
+    const items = all.filter(it => statusOf(it) === view);
+    items.forEach(it => counts[it.source] = (counts[it.source] || 0) + 1);
+    if (source && !counts[source]) source = '';
     chips.innerHTML = [['', 'All', items.length], ...Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([s,n]) => [s,s,n])]
       .map(([v,l,n]) => `<button class="chip" data-s="${esc(v)}" aria-pressed="${v === source}">${esc(l)}<span class="n">${n}</span></button>`).join('');
   }
@@ -195,6 +242,47 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     group = b.dataset.g; store.set('gtd.group', group); draw();
   }));
   document.getElementById('q').addEventListener('input', e => { q = e.target.value.trim().toLowerCase(); draw(); });
+
+  // ---- triage ----
+  const toast = document.getElementById('toast');
+  let undo = null, toastTimer = 0;
+  function say(msg, undoFn){
+    document.getElementById('toast-msg').textContent = msg;
+    undo = undoFn; document.getElementById('undo').hidden = !undoFn;
+    toast.hidden = false; clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.hidden = true; undo = null; }, 6000);
+  }
+  document.getElementById('undo').addEventListener('click', () => { const u = undo; toast.hidden = true; undo = null; if (u) u(); });
+
+  async function decide(it, decision, quiet){
+    const before = decided[it.id];
+    decided[it.id] = {decision, at: new Date().toISOString()};
+    render();
+    try {
+      await db.doc('decisions/' + it.id).set(decided[it.id]);
+    } catch (e) {
+      if (before) decided[it.id] = before; else delete decided[it.id];
+      render();
+      say(e && e.code === 'quota_exceeded' ? 'Storage is full: ask Claude to apply your decisions.' : 'Couldn’t save that. Try again.');
+      return;
+    }
+    if (!quiet) {
+      const prev = before ? before.decision : it.status;
+      say(`${DONE[decision]}: ${it.title}`, () => decide(it, prev, true));
+    }
+  }
+  document.getElementById('out').addEventListener('click', e => {
+    const b = e.target.closest('.act'); if (!b || !db) return;
+    const it = all.find(x => x.id === b.dataset.id); if (it) decide(it, b.dataset.d);
+  });
+
+  if (db) {
+    db.collection('decisions').onSnapshot(snap => {
+      for (const k of Object.keys(decided)) delete decided[k];
+      snap.docs.forEach(d => { const v = d.data(); if (v && ACTIONS[v.decision]) decided[d.id] = v; });
+      render();
+    }, () => { db = null; render(); });
+  }
 
   function row(it){
     const h = hrs(it);
@@ -211,20 +299,26 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
                                        : `<a href="${esc(c.add_link)}" target="_blank" rel="noopener">Add to Google Calendar</a>`;
       cal = `<div class="cal">📅 <b>${esc(label)}</b><span>${esc(c.timezone.split('/').pop().replace('_',' '))} · ${esc(c.location)}</span>${act}</div>`;
     }
+    const st = statusOf(it);
+    const acts = db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox'))
+      .map(d => `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}</div>` : '';
     return `<article class="it ${esc(it.priority)}"><div class="ic" aria-hidden="true">${esc(it.icon)}</div>
       <div class="main">${title}${meta ? `<div class="meta">${meta}</div>` : ''}
         ${it.note ? `<div class="note">${esc(it.note)}</div>` : ''}
         ${it.snippet ? `<div class="snip">${esc(it.snippet)}</div>` : ''}${cal}
         ${tags ? `<div class="tags">${tags}</div>` : ''}</div>
-      <div class="age${h > 48 ? ' stale' : ''}" title="${esc(new Date(it.at).toLocaleString())}">${age(h)}</div></article>`;
+      <div class="age${h > 48 ? ' stale' : ''}" title="${esc(new Date(it.at).toLocaleString())}">${age(h)}</div>${acts}</article>`;
   }
 
+  const EMPTY = {inbox: 'The tray is empty. Inbox zero.', later: 'Nothing saved for review later.',
+                 reference: 'Nothing archived yet.', trash: 'Trash is empty.'};
   function draw(){
     document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.g === group)));
+    const items = all.filter(it => statusOf(it) === view);
     const shown = items.filter(it => (!source || it.source === source) &&
       (!q || [it.title, it.who, it.note, it.snippet, it.tags.join(' '), it.source].join(' ').toLowerCase().includes(q)));
     const out = document.getElementById('out');
-    if (!shown.length) { out.innerHTML = `<div class="empty">${items.length ? 'Nothing matches this search or filter.' : 'The tray is empty. Inbox zero.'}</div>`; return; }
+    if (!shown.length) { out.innerHTML = `<div class="empty">${items.length ? 'Nothing matches this search or filter.' : EMPTY[view]}</div>`; return; }
     let groups;
     if (group === 'kind') groups = KINDS.map(([k, label]) => [label, shown.filter(it => kindOf(it) === k)]);
     else if (group === 'source') groups = Object.keys(counts).map(s => [s, shown.filter(it => it.source === s)]);
@@ -236,7 +330,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     out.innerHTML = groups.filter(g => g[1].length).map(([label, list]) =>
       `<section><h2>${esc(label)} <span class="n">${list.length}</span></h2><div class="list">${list.map(row).join('')}</div></section>`).join('');
   }
-  drawChips(); draw();
+  function render(){ drawSummary(); drawChips(); draw(); }
+  render();
 })();
 </script>
 """
