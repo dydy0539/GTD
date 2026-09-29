@@ -10,6 +10,7 @@ $GTD_HOME/feeds.yaml:
       - https://feeds.megaphone.fm/investlikethebest
     people:                        # new videos featuring someone, on any channel
       - {name: Dylan Patel, priority: normal, tags: [watch, dylan-patel]}
+      - {name: Ben Thompson, context: [Stratechery, Sharp Tech]}  # common name: require one of these
     skip_shorts: true
     priority: low                  # hint for everything captured from feeds
     tags: [watch]
@@ -138,8 +139,13 @@ def _video_renderers(node):
             yield from _video_renderers(v)
 
 
-def youtube_search(name: str, get=fetch) -> tuple[str, list[dict]]:
-    """Newest YouTube videos whose title or description mentions `name`."""
+def youtube_search(name: str, get=fetch, context=()) -> tuple[str, list[dict]]:
+    """Newest YouTube videos whose title or description mentions `name`.
+
+    `context`: for a common name, also require one of these words in the title,
+    description or channel name (e.g. Ben Thompson → Stratechery, Sharp Tech)."""
+    context = [c.lower() for c in context or ()]
+    relevant = lambda text: not context or any(c in text.lower() for c in context)
     from urllib.parse import quote_plus
     if _api_key():  # official API: reliable, 100 of the 10,000 free daily units per search
         after = (now() - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -149,7 +155,8 @@ def youtube_search(name: str, get=fetch) -> tuple[str, list[dict]]:
         entries = []
         for it in data.get("items", []):
             sn = it["snippet"]
-            if name.lower() not in f"{sn.get('title', '')} {sn.get('description', '')}".lower():
+            text = f"{sn.get('title', '')} {sn.get('description', '')}"
+            if name.lower() not in text.lower() or not relevant(f"{text} {sn.get('channelTitle', '')}"):
                 continue
             entries.append({"id": it["id"]["videoId"], "title": html.unescape(sn["title"]),
                             "url": f"https://www.youtube.com/watch?v={it['id']['videoId']}",
@@ -167,7 +174,7 @@ def youtube_search(name: str, get=fetch) -> tuple[str, list[dict]]:
         title = _runs(v.get("title"))
         snippet = " ".join(_runs(s.get("snippetText")) for s in v.get("detailedMetadataSnippets", []))
         snippet += " " + _runs(v.get("descriptionSnippet"))
-        if needle not in f"{title} {snippet}".lower():
+        if needle not in f"{title} {snippet}".lower() or not relevant(f"{title} {snippet} {_runs(v.get('ownerText'))}"):
             continue
         published = None
         rel = REL_TIME.search(_runs(v.get("publishedTimeText")))
@@ -219,7 +226,8 @@ def sync(store: Store, get=fetch, *, dry_run: bool = False) -> list[str]:
         spec = {"name": spec} if isinstance(spec, str) else dict(spec)
         name = spec["name"]
         spec["people"] = True
-        sources.append((f"youtube-search:{name}", lambda n=name: youtube_search(n, get), spec))
+        sources.append((f"youtube-search:{name}",
+                        lambda n=name, c=spec.get("context"): youtube_search(n, get, c), spec))
 
     for url, load, opts in sources:
         try:

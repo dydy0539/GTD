@@ -549,6 +549,18 @@ def _yt_search_page(videos):
 
 
 class PeopleSearchTest(unittest.TestCase):
+    def test_context_words_for_a_common_name(self):
+        from gtd.feeds import youtube_search
+        page = _yt_search_page([
+            ("b1", "Ben Thompson on Aggregation Theory", "Invest Like the Best", "1 day ago", "1:00:00", "Stratechery's founder"),
+            ("b2", "Ben Thompson career highlights", "Rugby Clips", "1 day ago", "10:00", "try of the season"),
+            ("b3", "Sharp Tech with Ben Thompson", "Sharp Tech", "2 days ago", "55:00", ""),
+        ])
+        _, found = youtube_search("Ben Thompson", lambda url: page, ["Stratechery", "Sharp Tech"])
+        self.assertEqual([e["id"] for e in found], ["b1", "b3"])
+        _, everyone = youtube_search("Ben Thompson", lambda url: page)
+        self.assertEqual(len(everyone), 3)
+
     def test_new_videos_featuring_a_person(self):
         from gtd.feeds import sync
         videos = [
