@@ -560,7 +560,15 @@ class PeopleSearchTest(unittest.TestCase):
             ("v7", "Dylan Patel undated", "Mystery", "", "45:00", ""),
         ]
         pages = {"html": _yt_search_page(videos)}
-        get = lambda url: pages["html"] if "results?search_query=%22Dylan+Patel%22" in url else (_ for _ in ()).throw(OSError(url))
+        upload = {"v8": "2024-05-01T00:00:00-07:00"}
+
+        def get(url):
+            if "results?search_query=%22Dylan+Patel%22" in url:
+                return pages["html"]
+            vid = url.rsplit("v=", 1)[-1]
+            if vid in upload:
+                return f'<meta itemprop="uploadDate" content="{upload[vid]}">'
+            raise OSError(url)
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(tmp)
             (store.home / "feeds.yaml").write_text(
@@ -572,8 +580,12 @@ class PeopleSearchTest(unittest.TestCase):
             self.assertEqual((got.source["author"], got.tags), ("BG2 Pod", ["watch", "dylan-patel"]))
             self.assertNotIn("hints", got.extra)  # normal priority, not the feeds' low default
             videos.insert(0, ("v6", "Dylan Patel x Dwarkesh", "Dwarkesh Patel", "10 minutes ago", "2:01:00", ""))
+            videos.append(("v8", "Dylan Patel 2024 deep dive", "Old Pod", "", "1:30:00", ""))  # undated, old
+            videos.append(("v9", "Dylan Patel classic", "Old Pod 2", "", "1:00:00", ""))       # undated, no page
             pages["html"] = _yt_search_page(videos)
-            self.assertEqual(len(sync(store, get)), 1)
+            new = [l for l in sync(store, get) if "capture" in l]
+            self.assertEqual(len(new), 1)  # only the genuinely new one
+            self.assertIn("Dylan Patel x Dwarkesh", new[0])
 
 
 class SiteTest(unittest.TestCase):

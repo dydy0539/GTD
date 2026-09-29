@@ -181,6 +181,16 @@ def youtube_search(name: str, get=fetch) -> tuple[str, list[dict]]:
     return f"YouTube: {name}", entries
 
 
+PEOPLE_MAX_AGE = timedelta(days=7)
+UPLOAD_DATE = re.compile(r'(?:"uploadDate"|"publishDate"|itemprop="uploadDate" content)[:=]\s*"([^"]+)"')
+
+
+def video_published(video_id: str, get=fetch) -> datetime | None:
+    """A video's upload date from its watch page (search results often leave it out)."""
+    m = UPLOAD_DATE.search(get(f"https://www.youtube.com/watch?v={video_id}"))
+    return _dt(m.group(1)) if m else None
+
+
 def load_config(store: Store) -> dict:
     path = store.home / "feeds.yaml"
     return (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
@@ -208,6 +218,7 @@ def sync(store: Store, get=fetch, *, dry_run: bool = False) -> list[str]:
     for spec in cfg.get("people") or []:
         spec = {"name": spec} if isinstance(spec, str) else dict(spec)
         name = spec["name"]
+        spec["people"] = True
         sources.append((f"youtube-search:{name}", lambda n=name: youtube_search(n, get), spec))
 
     for url, load, opts in sources:
@@ -224,6 +235,17 @@ def sync(store: Store, get=fetch, *, dry_run: bool = False) -> list[str]:
             if e["id"] in known or not e["url"]:
                 continue
             known.add(e["id"])
+            if opts.get("people"):
+                # search results mix in old videos and often carry no date: look the date up,
+                # and only count appearances from the last week
+                if not e["published"]:
+                    try:
+                        e["published"] = video_published(e["id"], get)
+                    except Exception:
+                        e["published"] = None
+                max_age = timedelta(days=opts.get("max_age_days", PEOPLE_MAX_AGE.days))
+                if not e["published"] or e["published"] < now() - max_age:
+                    continue
             # on a source's first read, only recent entries count; an entry without a date is
             # treated as old, so a new search never floods the inbox with its back catalogue
             too_old = first_time and (not e["published"] or e["published"] < now() - NEW_FEED_LOOKBACK)
