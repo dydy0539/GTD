@@ -23,13 +23,18 @@ def project_tag(name: str) -> str:
 
 def apply(store: Store, decisions) -> list[str]:
     """`decisions`: {id: "trash"} / {id: {"decision": "trash", "at": ...}} or a list of
-    {"id": ..., "decision": ..., "project": ..., "note": ...}; a project adds a
-    "project:<name>" tag, a note is appended. Unknown ids and values are reported, not fatal."""
+    {"id": ..., "decision": ..., "project": ..., "note": ..., "calendar": {...}}; a project adds a
+    "project:<name>" tag, a note is appended, a calendar dict ({start, location, summary})
+    changes the item's appointment. Unknown ids and values are reported, not fatal."""
     if isinstance(decisions, dict):
         decisions = [{"id": k, **(v if isinstance(v, dict) else {"decision": v})} for k, v in decisions.items()]
     report = []
     for d in decisions:
         item_id, choice = d.get("id", ""), d.get("decision", "")
+        if d.get("calendar"):
+            report += _reschedule(store, item_id, d["calendar"])
+            if not choice:
+                continue
         if choice not in DECISIONS:
             report.append(f"  ? {item_id}: unknown decision {choice!r}")
             continue
@@ -53,3 +58,22 @@ def apply(store: Store, decisions) -> list[str]:
                   **({"at": d["at"]} if d.get("at") else {}))
         report.append(f"  ✓ {DECISIONS[choice]:<20} {item.title}"[:120])
     return report
+
+
+def _reschedule(store: Store, item_id: str, change: dict) -> list[str]:
+    from .gcal import reschedule
+    try:
+        item = store.get(item_id)
+    except KeyError:
+        return [f"  ? {item_id}: no such item"]
+    try:
+        changed = reschedule(item, change.get("start"), change.get("location"), change.get("summary"))
+    except (ValueError, TypeError) as e:
+        return [f"  ? {item_id}: bad appointment change ({e})"]
+    if not changed:
+        return []
+    store.save(item)
+    cal = item.extra["calendar"]
+    store.log("rescheduled", item.id, start=cal["start"], location=cal["location"])
+    where = f" · {cal['location']}" if cal["location"] else ""
+    return [f"  ✓ 📅 {cal['summary']} — {cal['start'].replace('T', ' ')}{where}"[:120]]

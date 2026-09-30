@@ -103,6 +103,43 @@ class GoogleCalendar:
         return cls(json.loads(info), calendar_id)
 
 
+def reschedule(item: Item, start: str | None = None, location: str | None = None,
+               summary: str | None = None) -> bool:
+    """Change an item's appointment (made from the In-tray page's Edit form).
+
+    `start` is local time in the event's zone ("2026-10-02T15:30"); the length is kept.
+    An item without an appointment gets one if a start is given. Returns True if anything changed.
+    """
+    cal = dict(item.extra.get("calendar") or {})
+    if not cal and not start:
+        return False
+    before = dict(cal)
+    if not cal:
+        cal = {"summary": item.title[:60], "location": "", "timezone": default_timezone(),
+               "description": f"{item.content}\n\n(captured in GTD inbox: {item.id})"}
+    length = (datetime.fromisoformat(cal["end"]) - datetime.fromisoformat(cal["start"])
+              if cal.get("start") and cal.get("end") else timedelta(minutes=DEFAULT_MINUTES))
+    if location is not None and location.strip() != cal.get("location", ""):
+        cal["location"] = location.strip()
+        cal["timezone"] = guess_timezone(cal["location"], cal["timezone"])
+    if summary and summary.strip():
+        cal["summary"] = summary.strip()[:80]
+    if start:
+        begin = datetime.fromisoformat(start)
+        cal["start"] = begin.isoformat(timespec="minutes")
+        cal["end"] = (begin + length).isoformat(timespec="minutes")
+    event = {k: cal[k] for k in ("summary", "location", "start", "end", "timezone", "description")}
+    cal.update(add_link=add_link(event))
+    if cal.get("status") == "added":  # the calendar entry itself isn't moved: offer a fresh link
+        cal["status"] = "changed"
+    else:
+        cal["status"] = "proposed"
+    if {k: v for k, v in cal.items() if k != "status"} == {k: v for k, v in before.items() if k != "status"}:
+        return False
+    item.extra["calendar"] = cal
+    return True
+
+
 def event_id_for(item: Item) -> str:
     # Google allows [a-v0-9]; hex digits are a subset. Stable per item → no duplicates.
     return "gtd" + hashlib.sha1(item.id.encode()).hexdigest()

@@ -385,6 +385,35 @@ class PriorityAndVisionTest(unittest.TestCase):
 
 
 class CalendarTest(unittest.TestCase):
+    def test_reschedule_from_the_page(self):
+        from gtd import cli
+        from gtd.decide import apply
+        from gtd.gcal import schedule
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            item, _ = store.add(adapters.from_text("Haircut friday at 3pm", via="telegram"))
+            item.source["sent_at"] = "2026-09-30T02:04:42+00:00"
+            store.save(item)
+            schedule(store)
+            cal = store.get(item.id).extra["calendar"]
+            report = apply(store, {item.id: {"calendar": {
+                "start": "2026-10-03T11:30", "location": "Toni&Guy, 391 Orchard Road, Singapore 238872",
+                "summary": "Haircut with Mei"}}})
+            self.assertEqual(len(report), 1)
+            new = store.get(item.id).extra["calendar"]
+            self.assertEqual((new["start"], new["end"], new["timezone"], new["summary"]),
+                             ("2026-10-03T11:30", "2026-10-03T12:30", "Asia/Singapore", "Haircut with Mei"))
+            self.assertIn("20261003T113000", new["add_link"])
+            self.assertEqual(store.get(item.id).status, "inbox")        # an edit isn't a decision
+            self.assertEqual(apply(store, {item.id: {"calendar": {"start": "2026-10-03T11:30"}}}), [])  # no-op
+            schedule(store)                                               # the next run keeps the edit
+            self.assertEqual(store.get(item.id).extra["calendar"]["start"], "2026-10-03T11:30")
+            self.assertNotEqual(cal["start"], new["start"])
+
+            other, _ = store.add(adapters.from_text("Dinner with Sam", via="telegram"))
+            cli.main(["--home", tmp, "reschedule", other.id, "--start", "2026-10-04T19:00"])
+            self.assertEqual(store.get(other.id).extra["calendar"]["summary"], "Dinner with Sam")
+
     def test_day_and_time_without_a_place(self):
         from datetime import datetime
         from gtd import when

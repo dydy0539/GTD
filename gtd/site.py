@@ -41,7 +41,7 @@ def _record(i: Item) -> dict:
         "at": i.captured_at.isoformat(), "who": who[:80],
         "note": i.note, "snippet": snippet[:240],
         "tags": i.tags, "priority": hints.get("priority", ""),
-        "calendar": {k: cal[k] for k in ("start", "timezone", "location", "add_link", "status", "html_link")
+        "calendar": {k: cal[k] for k in ("summary", "start", "end", "timezone", "location", "add_link", "status", "html_link")
                      if k in cal} if cal else None,
     }
 
@@ -144,6 +144,16 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 .toast[hidden]{display:none}
 .toast span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .toast button{font:600 14px var(--sans);color:var(--accent-soft);background:none;border:0;cursor:pointer;padding:0;flex:none}
+.cal-edit{font:500 12px var(--sans);color:var(--cal);background:none;border:1px solid currentColor;border-radius:6px;
+  padding:2px 8px;cursor:pointer;margin-left:auto}
+.cal-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-top:4px;
+  background:var(--cal-soft);border-radius:6px;padding:10px}
+.cal-form label{display:grid;gap:3px;font-size:12px;color:var(--cal);font-weight:600}
+.cal-form input{font:14px var(--sans);color:var(--ink);background:var(--surface);border:1px solid var(--line);
+  border-radius:6px;padding:6px 8px;min-width:0}
+.cal-form .wide{grid-column:1/-1}
+.cal-form .btns{grid-column:1/-1;display:flex;gap:8px}
+.cal-form .save{background:var(--cal);color:var(--surface);border-color:var(--cal)}
 .empty{color:var(--muted);padding:28px 16px;text-align:center;background:var(--surface);border:1px dashed var(--line);border-radius:10px}
 @media (max-width:480px){.it{grid-template-columns:24px 1fr}.age{grid-column:2;text-align:left}}
 @media (prefers-reduced-motion:no-preference){.it{transition:background .15s}.it:hover{background:var(--ground)}}
@@ -182,8 +192,24 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   const VIEWS = [['inbox','In-tray'], ['later','Review later'], ['reference','Archive'], ['trash','Trash']];
   const ACTIONS = {trash:'🗑 Trash', later:'⏳ Review later', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
   const DONE = {trash:'Moved to Trash', later:'Saved for review later', reference:'Archived for reference', inbox:'Back in the in-tray'};
-  const decided = {};
+  const decided = {}, edits = {};
+  let editing = '';
   const statusOf = it => (decided[it.id] && decided[it.id].decision) || it.status;
+  // Appointment changes from the Edit form live in edits/<item id> = {start, end, location, summary, at}
+  const pad = n => String(n).padStart(2, '0');
+  const localIso = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  function gcalLink(c){
+    const f = s => s.replace(/[-:]/g, '').slice(0, 13) + '00';
+    return 'https://calendar.google.com/calendar/render?' + new URLSearchParams({action:'TEMPLATE', text:c.summary || 'Appointment',
+      dates:f(c.start) + '/' + f(c.end), ctz:c.timezone, location:c.location || '', details:'(captured in GTD inbox)'});
+  }
+  function calOf(it){
+    const e = edits[it.id], c = it.calendar;
+    if (!e) return c;
+    const merged = {...(c || {timezone: 'UTC', location: ''}), ...e, status: 'proposed'};
+    merged.add_link = gcalLink(merged);
+    return merged;
+  }
   let db = null;
   try { db = window.claude && await window.claude.use('db'); } catch (e) { db = null; }
 
@@ -194,7 +220,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   const KINDS = [
     ['attention','Needs attention', it => it.priority === 'high'],
-    ['appointments','Appointments', it => !!it.calendar],
+    ['appointments','Appointments', it => !!calOf(it)],
     ['notes','Notes & to-dos', it => ['text','message','image','file','audio'].includes(it.channel) && ['telegram','email-to-self','cli','claude'].includes(it.via)],
     ['research','Research to read', it => it.tags.includes('research')],
     ['pubs','Publications', it => it.tags.includes('read-later')],
@@ -271,8 +297,27 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       say(`${DONE[decision]}: ${it.title}`, () => decide(it, prev, true));
     }
   }
-  document.getElementById('out').addEventListener('click', e => {
-    const b = e.target.closest('.act'); if (!b || !db) return;
+  document.getElementById('out').addEventListener('click', async e => {
+    if (!db) return;
+    const ed = e.target.closest('.cal-edit');
+    if (ed) { editing = editing === ed.dataset.id ? '' : ed.dataset.id; draw(); return; }
+    if (e.target.closest('.cal-cancel')) { editing = ''; draw(); return; }
+    const sv = e.target.closest('.cal-save');
+    if (sv) {
+      const form = sv.closest('.cal-form'), it = all.find(x => x.id === sv.dataset.id), c = calOf(it);
+      const get = n => form.querySelector(`[name=${n}]`).value.trim();
+      if (!get('day') || !get('time')) { say('Pick a day and a time.'); return; }
+      const start = `${get('day')}T${get('time')}`;
+      const length = c && c.end ? Date.parse(c.end) - Date.parse(c.start) : 36e5;
+      const change = {start, end: localIso(new Date(Date.parse(start) + (length > 0 ? length : 36e5))),
+                      location: get('location'), summary: get('summary'), at: new Date().toISOString()};
+      const before = edits[it.id];
+      edits[it.id] = change; editing = ''; render();
+      try { await db.doc('edits/' + it.id).set(change); say('Appointment updated: ' + (change.summary || it.title)); }
+      catch (err) { if (before) edits[it.id] = before; else delete edits[it.id]; render(); say('Couldn’t save that. Try again.'); }
+      return;
+    }
+    const b = e.target.closest('.act'); if (!b) return;
     const it = all.find(x => x.id === b.dataset.id); if (it) decide(it, b.dataset.d);
   });
 
@@ -282,26 +327,40 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       snap.docs.forEach(d => { const v = d.data(); if (v && ACTIONS[v.decision]) decided[d.id] = v; });
       render();
     }, () => { db = null; render(); });
+    db.collection('edits').onSnapshot(snap => {
+      for (const k of Object.keys(edits)) delete edits[k];
+      snap.docs.forEach(d => { const v = d.data(); if (v && v.start) edits[d.id] = v; });
+      render();
+    }, () => {});
   }
 
   function row(it){
     const h = hrs(it);
-    const title = it.url ? `<a class="t" href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a>` : `<span class="t">${esc(it.title)}</span>`;
+    const titleHtml = it.url ? `<a class="t" href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a>` : `<span class="t">${esc(it.title)}</span>`;
     const meta = [it.who, it.source].filter(Boolean).map(esc).join(' · ');
     const tags = [...(it.priority === 'high' ? ['<span class="tag p-high">high</span>'] : []),
                   ...(it.priority === 'low' ? ['<span class="tag">low</span>'] : []),
                   ...it.tags.map(t => `<span class="tag">${esc(t)}</span>`)].join('');
     let cal = '';
-    if (it.calendar) {
-      const c = it.calendar, when = new Date(c.start);
+    const c = calOf(it);
+    if (c) {
+      const when = new Date(c.start);
       const label = when.toLocaleString(undefined, {weekday:'short', day:'numeric', month:'short'}) + ' ' + c.start.slice(11,16);
       const act = c.status === 'added' ? (c.html_link ? `<a href="${esc(c.html_link)}" target="_blank" rel="noopener">On your calendar ✓</a>` : 'On your calendar ✓')
                                        : `<a href="${esc(c.add_link)}" target="_blank" rel="noopener">Add to Google Calendar</a>`;
-      cal = `<div class="cal">📅 <b>${esc(label)}</b><span>${esc([c.timezone.split('/').pop().replace('_',' '), c.location].filter(Boolean).join(' · '))}</span>${act}</div>`;
+      const edit = db ? `<button class="cal-edit" data-id="${esc(it.id)}">✎ Edit</button>` : '';
+      cal = `<div class="cal">📅 <b>${esc(label)}</b><span>${esc([c.timezone.split('/').pop().replace('_',' '), c.location].filter(Boolean).join(' · '))}</span>${act}${edit}</div>`;
+      if (editing === it.id) cal += `<div class="cal-form" data-id="${esc(it.id)}">
+        <label class="wide">What<input name="summary" value="${esc(c.summary || it.title)}"></label>
+        <label>Day<input type="date" name="day" value="${esc(c.start.slice(0,10))}" required></label>
+        <label>Time<input type="time" name="time" value="${esc(c.start.slice(11,16))}" required></label>
+        <label class="wide">Where<input name="location" value="${esc(c.location)}" placeholder="Address or place (optional)"></label>
+        <div class="btns"><button class="act save cal-save" data-id="${esc(it.id)}">Save</button><button class="act cal-cancel">Cancel</button></div></div>`;
     }
     const st = statusOf(it);
     const acts = db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox'))
       .map(d => `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}</div>` : '';
+    const title = c && c.summary ? (it.url ? `<a class="t" href="${esc(it.url)}" target="_blank" rel="noopener">${esc(c.summary)}</a>` : `<span class="t">${esc(c.summary)}</span>`) : titleHtml;
     return `<article class="it ${esc(it.priority)}"><div class="ic" aria-hidden="true">${esc(it.icon)}</div>
       <div class="main">${title}${meta ? `<div class="meta">${meta}</div>` : ''}
         ${it.note ? `<div class="note">${esc(it.note)}</div>` : ''}

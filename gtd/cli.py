@@ -14,6 +14,7 @@
   gtd decide 20260928T1430 trash       # or later / reference / inbox
   gtd decide 20260928T1930 reference --project "Study Transformer"
   gtd decide decisions.json            # choices made on the In-tray page
+  gtd reschedule 20260930T0204 --start 2026-10-02T15:30 --location "Toni&Guy Orchard"
   gtd sync              # share with your other devices (private git repo)
 """
 from __future__ import annotations
@@ -80,6 +81,15 @@ def cmd_decide(store: Store, a: argparse.Namespace) -> int:
     report = apply(store, decisions)
     print(f"Decided {sum(l.lstrip().startswith('✓') for l in report)} item(s)")
     print("\n".join(report))
+    return 0
+
+
+def cmd_reschedule(store: Store, a: argparse.Namespace) -> int:
+    from .decide import apply
+
+    change = {k: v for k, v in (("start", a.start), ("location", a.location), ("summary", a.title)) if v is not None}
+    report = apply(store, [{"id": a.id, "calendar": change}])
+    print("\n".join(report) or "Nothing changed")
     return 0
 
 
@@ -216,6 +226,13 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--project", help="file it under a project (adds a project:<name> tag)")
     d.add_argument("--note", help="append a note, e.g. why it's kept")
     d.set_defaults(fn=cmd_decide)
+
+    rs = sub.add_parser("reschedule", help="change an appointment's time, place or title")
+    rs.add_argument("id")
+    rs.add_argument("--start", help="local time, e.g. 2026-10-02T15:30")
+    rs.add_argument("--location")
+    rs.add_argument("--title")
+    rs.set_defaults(fn=cmd_reschedule)
 
     g = sub.add_parser("gmail", help="Gmail funnel").add_subparsers(dest="gcmd", required=True)
     gs = g.add_parser("sync", help="pull new mail through rules.yaml into the inbox")
