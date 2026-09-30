@@ -109,6 +109,26 @@ def cmd_here(store: Store, a: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_projects_save(store: Store, a: argparse.Namespace) -> int:
+    """Back up the Projects page (projects + logged sessions) into the data repo."""
+    import json
+
+    data = json.loads(Path(a.file).read_text(encoding="utf-8"))
+    projects = data.get("projects") or {}
+    logs = data.get("logs") or {}
+    path = store.home / "projects.json"
+    old = json.loads(path.read_text()) if path.exists() else {"projects": {}, "logs": {}}
+    merged = {"projects": {**old.get("projects", {}), **projects}, "logs": {**old.get("logs", {}), **logs}}
+    for pid in data.get("deleted") or []:
+        merged["projects"].pop(pid, None)
+    text = json.dumps(merged, ensure_ascii=False, indent=1, sort_keys=True) + "\n"
+    if not path.exists() or path.read_text() != text:
+        path.write_text(text, encoding="utf-8")
+        store.log("projects", "-", projects=len(merged["projects"]), logs=len(merged["logs"]))
+    print(f"{len(merged['projects'])} project(s), {len(merged['logs'])} logged session(s) in {path.name}")
+    return 0
+
+
 def cmd_gmail_sync(store: Store, a: argparse.Namespace) -> int:
     from .gmail import GmailIMAP, sync
 
@@ -253,6 +273,11 @@ def main(argv: list[str] | None = None) -> int:
     h = sub.add_parser("here", help="show or set where you are (the time zone for 'Friday 3pm')")
     h.add_argument("place", nargs="*", help="tokyo, singapore, or a time zone like Asia/Tokyo")
     h.set_defaults(fn=cmd_here)
+
+    pj = sub.add_parser("projects", help="Projects page backup").add_subparsers(dest="pcmd", required=True)
+    ps = pj.add_parser("save", help="merge an export of the page's projects and logs into projects.json")
+    ps.add_argument("file", help='JSON: {"projects": {id: {...}}, "logs": {id: {...}}, "deleted": [ids]}')
+    ps.set_defaults(fn=cmd_projects_save)
 
     g = sub.add_parser("gmail", help="Gmail funnel").add_subparsers(dest="gcmd", required=True)
     gs = g.add_parser("sync", help="pull new mail through rules.yaml into the inbox")

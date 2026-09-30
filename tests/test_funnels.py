@@ -786,3 +786,23 @@ class HereTest(unittest.TestCase):
         self.assertIsNone(here.zone_for("Narnia"))
         self.assertEqual(here.zone_for_coords(1.29, 103.85), "Asia/Singapore")
         self.assertIsNone(here.zone_for_coords(51.5, -0.1))
+
+
+class ProjectsBackupTest(unittest.TestCase):
+    def test_save_merges_and_deletes(self):
+        import json as _json
+        from gtd import cli, site
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "export.json"
+            f.write_text(_json.dumps({"projects": {"z2": {"name": "Zone 2", "kind": "recurring"},
+                                                   "x": {"name": "Old", "kind": "oneoff"}},
+                                      "logs": {"l1": {"project": "z2", "amount": 30}}}))
+            cli.main(["--home", tmp, "projects", "save", str(f)])
+            f.write_text(_json.dumps({"projects": {}, "logs": {"l2": {"project": "z2", "amount": 20}}, "deleted": ["x"]}))
+            cli.main(["--home", tmp, "projects", "save", str(f)])
+            saved = _json.loads((Path(tmp) / "projects.json").read_text())
+            self.assertEqual(set(saved["projects"]), {"z2"})
+            self.assertEqual(set(saved["logs"]), {"l1", "l2"})
+            page = site.page([])
+            self.assertIn('id="proj-view"', page)
+            self.assertIn("#projects", page)
