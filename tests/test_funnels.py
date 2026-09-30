@@ -385,6 +385,20 @@ class PriorityAndVisionTest(unittest.TestCase):
 
 
 class CalendarTest(unittest.TestCase):
+    def test_day_and_time_without_a_place(self):
+        from datetime import datetime
+        from gtd import when
+        from gtd.gcal import event_for
+        now = datetime(2026, 9, 30, 10, 4)  # a Wednesday
+        found = when.find("Haircut friday at 3pm", now)
+        self.assertEqual((found.start, found.location, found.rest), (datetime(2026, 10, 2, 15, 0), "", "Haircut"))
+        self.assertIsNone(when.find("call mum at 3pm", now))        # a time alone: a to-do, not an appointment
+        self.assertIsNone(when.find("Q3 revenue up 3% on Friday", now))
+        item = adapters.from_text("Haircut friday at 3pm", via="telegram")
+        item.source["sent_at"] = "2026-09-30T02:04:42+00:00"
+        event = event_for(item, "Asia/Singapore")
+        self.assertEqual((event["summary"], event["start"], event["location"]), ("Haircut", "2026-10-02T15:00", ""))
+
     SOFIA = "地址：The Riverwalk, 20 Upper Circular Road, Singapore 058416\n时间：星期三下午2点15 @🦩sofia"
 
     def test_when_parser(self):

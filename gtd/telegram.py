@@ -180,7 +180,8 @@ def sync(store: Store, api: TelegramAPI, *, dry_run: bool = False) -> list[str]:
                     event = None
                 if event:
                     when_ = datetime.fromisoformat(event["start"]).strftime("%a %d %b %H:%M")
-                    text += f"\n📅 {when_} · {event['location'][:60]}\nAdd to calendar: {add_link(event)}"
+                    where = f" · {event['location'][:60]}" if event["location"] else ""
+                    text += f"\n📅 {when_}{where}\nAdd to calendar: {add_link(event)}"
                 api.reply(chat, text)
             report.append(f"  capture  {item.icon} {item.title[:60]}")
 

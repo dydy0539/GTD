@@ -297,7 +297,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       const label = when.toLocaleString(undefined, {weekday:'short', day:'numeric', month:'short'}) + ' ' + c.start.slice(11,16);
       const act = c.status === 'added' ? (c.html_link ? `<a href="${esc(c.html_link)}" target="_blank" rel="noopener">On your calendar ✓</a>` : 'On your calendar ✓')
                                        : `<a href="${esc(c.add_link)}" target="_blank" rel="noopener">Add to Google Calendar</a>`;
-      cal = `<div class="cal">📅 <b>${esc(label)}</b><span>${esc(c.timezone.split('/').pop().replace('_',' '))} · ${esc(c.location)}</span>${act}</div>`;
+      cal = `<div class="cal">📅 <b>${esc(label)}</b><span>${esc([c.timezone.split('/').pop().replace('_',' '), c.location].filter(Boolean).join(' · '))}</span>${act}</div>`;
     }
     const st = statusOf(it);
     const acts = db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox'))

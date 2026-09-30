@@ -4,7 +4,11 @@
     时间：星期三下午2点15 @🦩sofia
       → Wed 14:15 (next Wednesday), location "The Riverwalk, …", rest "@🦩sofia"
 
-Deliberately rule-based and conservative: when in doubt it finds nothing.
+    Haircut friday at 3pm
+      → Fri 15:00, no location, rest "Haircut"
+
+Deliberately rule-based and conservative: when in doubt it finds nothing. With a
+place, a time is enough; without one, it needs both a day and a time.
 """
 from __future__ import annotations
 
@@ -111,12 +115,13 @@ def _date(text: str, today: date) -> tuple[date, tuple[int, int]] | None:
 
 
 def find(text: str, now: datetime) -> Found | None:
-    """A time *and* a place in `text`, interpreted relative to `now` (local, naive)."""
+    """A time (and a place, if given) in `text`, interpreted relative to `now` (local, naive)."""
     loc_match = LOCATION_LABEL.search(text) or POSTAL_LINE.search(text)
-    if not loc_match:
-        return None
-    location = (loc_match.group(1) if loc_match.re is LOCATION_LABEL else loc_match.group(0)).strip()
-    rest = (text[:loc_match.start()] + text[loc_match.end():]).strip()
+    if loc_match:
+        location = (loc_match.group(1) if loc_match.re is LOCATION_LABEL else loc_match.group(0)).strip()
+        rest = (text[:loc_match.start()] + text[loc_match.end():]).strip()
+    else:
+        location, rest = "", text.strip()
 
     t = _time(rest)
     if not t:
@@ -127,10 +132,13 @@ def find(text: str, now: datetime) -> Found | None:
     if d:
         day, span = d
         rest = rest[:span[0]] + " " + rest[span[1]:]
+    elif not location:  # "call mum at 3pm" is a to-do, not an appointment
+        return None
     else:  # a time without a day: the next time the clock shows it
         day = now.date() if clock > now.time() else now.date() + timedelta(days=1)
     rest = TIME_LABEL.sub("", rest)
     rest = re.sub(r"[ \t]+", " ", rest).strip(" \n,，。;；:：")
+    rest = re.sub(r"(?i)(?:\s+(?:at|on|@|,))+$", "", rest).strip()  # "Haircut at" → "Haircut"
     return Found(datetime.combine(day, clock), location, rest)
 
 
