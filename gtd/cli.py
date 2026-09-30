@@ -64,8 +64,9 @@ def cmd_render(store: Store, a: argparse.Namespace) -> int:
     (out / "inbox.html").write_text(site.document(items), encoding="utf-8")
     if a.page:  # body only, for hosts that add the document skeleton (claude.ai pages)
         kept = [i for i in store.items(status=None) if i.status in site.SHOWN]
-        from .here import current
-        Path(a.page).write_text(site.page(kept, here=current(store)), encoding="utf-8")
+        from .here import current, get
+        here = current(store) if get(store) else ""  # only once a signal says where you are
+        Path(a.page).write_text(site.page(kept, here=here), encoding="utf-8")
     print(f"Wrote {out / 'INBOX.md'} and {out / 'inbox.html'} ({len(items)} items)")
     return 0
 
