@@ -64,7 +64,8 @@ def cmd_render(store: Store, a: argparse.Namespace) -> int:
     (out / "inbox.html").write_text(site.document(items), encoding="utf-8")
     if a.page:  # body only, for hosts that add the document skeleton (claude.ai pages)
         kept = [i for i in store.items(status=None) if i.status in site.SHOWN]
-        Path(a.page).write_text(site.page(kept), encoding="utf-8")
+        from .here import current
+        Path(a.page).write_text(site.page(kept, here=current(store)), encoding="utf-8")
     print(f"Wrote {out / 'INBOX.md'} and {out / 'inbox.html'} ({len(items)} items)")
     return 0
 
@@ -90,6 +91,20 @@ def cmd_reschedule(store: Store, a: argparse.Namespace) -> int:
     change = {k: v for k, v in (("start", a.start), ("location", a.location), ("summary", a.title)) if v is not None}
     report = apply(store, [{"id": a.id, "calendar": change}])
     print("\n".join(report) or "Nothing changed")
+    return 0
+
+
+def cmd_here(store: Store, a: argparse.Namespace) -> int:
+    from .here import current, get, label, set_here, zone_for
+
+    if a.place:
+        zone = zone_for(" ".join(a.place))
+        if not zone:
+            print(f"error: unknown place or time zone {' '.join(a.place)!r}", file=sys.stderr)
+            return 1
+        set_here(store, zone, "cli")
+    zone, state = current(store), get(store)
+    print(f"Times mean {label(zone)} time ({zone})" + (f", set via {state['source']} at {state['since']}" if state else ""))
     return 0
 
 
@@ -233,6 +248,10 @@ def main(argv: list[str] | None = None) -> int:
     rs.add_argument("--location")
     rs.add_argument("--title")
     rs.set_defaults(fn=cmd_reschedule)
+
+    h = sub.add_parser("here", help="show or set where you are (the time zone for 'Friday 3pm')")
+    h.add_argument("place", nargs="*", help="tokyo, singapore, or a time zone like Asia/Tokyo")
+    h.set_defaults(fn=cmd_here)
 
     g = sub.add_parser("gmail", help="Gmail funnel").add_subparsers(dest="gcmd", required=True)
     gs = g.add_parser("sync", help="pull new mail through rules.yaml into the inbox")

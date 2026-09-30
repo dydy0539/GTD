@@ -127,6 +127,10 @@ def sync(store: Store, rules: Rules, mailbox: Mailbox, *, dry_run: bool = False,
             report.append(f"  skip     {subject}  ({decision.rule})")
         elif decision.action == "self-capture":
             entries = adapters.from_self_email(mail.raw)
+            from .here import set_here, zone_for_offset
+            sent = entries[0][0].source.get("sent_at") if entries else None
+            if sent and zone_for_offset(sent) and not dry_run:
+                set_here(store, zone_for_offset(sent), "email", sent)
             for new, blobs in entries:
                 if not dry_run:
                     new, _ = store.add(new, blobs=blobs)

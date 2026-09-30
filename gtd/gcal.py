@@ -39,7 +39,8 @@ def event_for(item: Item, default_tz: str | None = None) -> dict | None:
     text = "\n".join(filter(None, [item.note, item.content]))
     sent = item.source.get("sent_at")
     ref = datetime.fromisoformat(sent) if sent else item.captured_at
-    tz = default_tz or default_timezone()
+    from .here import zone_for_offset
+    tz = (zone_for_offset(sent) if sent else None) or default_tz or default_timezone()
     # Resolve "Wednesday 2:15pm" against the moment you sent it, in the event's own time zone
     probe = find(text, ref.astimezone(ZoneInfo(tz)).replace(tzinfo=None))
     if not probe:
@@ -146,13 +147,14 @@ def event_id_for(item: Item) -> str:
 
 
 def schedule(store: Store, calendar: "GoogleCalendar | None" = None) -> list[str]:
-    report = []
+    from .here import current
+    report, here = [], current(store)
     for item in store.items():
         cal = item.extra.get("calendar")
         if item.via not in SELF_AUTHORED or (cal and cal.get("status") == "added"):
             continue
         try:
-            event = cal or event_for(item)
+            event = cal or event_for(item, here)
         except Exception as e:  # one odd item must not stop the rest
             report.append(f"  ✗ 📅 {item.title[:50]}  ({type(e).__name__})")
             continue

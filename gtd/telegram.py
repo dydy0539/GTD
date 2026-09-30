@@ -164,10 +164,29 @@ def sync(store: Store, api: TelegramAPI, *, dry_run: bool = False) -> list[str]:
                 api.reply(chat, answer)
             report.append(f"  follow   {ref}")
             return
+        if text_in.lower().startswith("/here") or ("location" in msg and "venue" not in msg):
+            from .here import current, label, set_here, zone_for, zone_for_coords
+            if "location" in msg:
+                zone = zone_for_coords(msg["location"]["latitude"], msg["location"]["longitude"])
+            else:
+                zone = zone_for(text_in[len("/here"):]) if text_in[len("/here"):].strip() else None
+            if not dry_run:
+                if zone:
+                    set_here(store, zone, "telegram", datetime.fromtimestamp(msg["date"], timezone.utc).isoformat())
+                    answer = f"📍 Got it — times you send now mean {label(zone)} time ({zone})."
+                elif "location" in msg:
+                    answer = "📍 I only know Japan, Singapore and Hong Kong so far. Send /here <city or time zone>."
+                else:
+                    answer = (f"📍 Times currently mean {label(current(store))} time.\n"
+                              "Change it with /here tokyo, /here singapore, or share your location.")
+                api.reply(chat, answer)
+            report.append(f"  here     {zone or '?'}")
+            return
         if text_in.startswith("/"):
             if not dry_run:
                 api.reply(chat, HELP + "\n\n/follow @channel — follow a YouTube channel or feed"
-                                "\n/invite — link another Telegram account (e.g. your other phone)")
+                                "\n/invite — link another Telegram account (e.g. your other phone)"
+                                "\n/here tokyo — say where you are, so times mean your local time")
             return
         for item, blobs in message_to_items(msg, api):
             if not dry_run:
@@ -175,7 +194,8 @@ def sync(store: Store, api: TelegramAPI, *, dry_run: bool = False) -> list[str]:
                 text = (f"✓ Captured: {item.title}" if created
                         else f"↺ Already in your inbox: {item.title}")
                 try:  # the calendar hint is a nicety; it must never break capture
-                    event = event_for(item) if created else None
+                    from .here import current
+                    event = event_for(item, current(store)) if created else None
                 except Exception:
                     event = None
                 if event:

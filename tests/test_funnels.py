@@ -1,6 +1,7 @@
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -729,3 +730,59 @@ class TwoPhonesTest(unittest.TestCase):
             fake.updates.append(tg(7, 99, text=f"/join {code}"))   # the code works only once
             sync(store, api)
             self.assertEqual(len(list(store.items())), 3)
+
+
+class HereTest(unittest.TestCase):
+    """Where you are decides what "Friday 3pm" means."""
+
+    def test_signals_and_calendar(self):
+        import os
+        from email.message import EmailMessage as _Msg
+        from gtd import here
+        from gtd.decide import apply
+        from gtd.telegram import TelegramAPI, sync
+        from gtd.gcal import event_for
+        os.environ.pop("GTD_TIMEZONE", None)
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.dict(os.environ, {"TZ": "Asia/Tokyo"}):
+            store = Store(tmp)
+            self.assertEqual(here.current(store), "Asia/Tokyo")          # no signal yet: the TZ setting
+
+            # Telegram: /here and a shared location (1790000000 = 2026-09-21)
+            fake = FakeTelegram([tg(1, 42, text="hi"), tg(2, 42, text="/here singapore")])
+            api = TelegramAPI("TOKEN", http=fake)
+            sync(store, api)
+            self.assertEqual(here.current(store), "Asia/Singapore")
+            self.assertIn("Singapore", fake.sent[-1])
+            fake.updates.append(tg(3, 42, location={"latitude": 35.68, "longitude": 139.76}, date=1790000100))
+            sync(store, api)
+            self.assertEqual(here.current(store), "Asia/Tokyo")
+            self.assertEqual({i.title for i in store.items()}, {"hi"})   # commands and locations aren't captured
+
+            # An older signal never overrides a newer one; the page's newer one does
+            self.assertFalse(here.set_here(store, "Asia/Singapore", "email", "2026-09-01T00:00:00+08:00"))
+            report = apply(store, {"_here": {"timezone": "Asia/Singapore", "at": "2026-09-30T03:00:00Z"}})
+            self.assertEqual(here.current(store), "Asia/Singapore")
+            self.assertEqual(len(report), 1)
+
+            # A Telegram note is read in the current zone; an email in the sender's offset
+            item = adapters.from_text("Haircut friday at 3pm", via="telegram")
+            item.source["sent_at"] = "2026-09-30T02:04:42+00:00"
+            self.assertEqual(event_for(item, here.current(store))["timezone"], "Asia/Singapore")
+            msg = _Msg()
+            msg["From"] = msg["To"] = "me@example.com"
+            msg["Subject"] = "Dentist"
+            msg["Date"] = "Wed, 30 Sep 2026 11:00:00 +0900"
+            msg.set_content("Dentist thursday 10:30")
+            mail_item = adapters.from_self_email(msg.as_bytes())[0][0]
+            self.assertEqual(mail_item.source["sent_at"], "2026-09-30T11:00:00+09:00")
+            event = event_for(mail_item, here.current(store))
+            self.assertEqual((event["timezone"], event["start"]), ("Asia/Tokyo", "2026-10-01T10:30"))
+
+    def test_zone_names(self):
+        from gtd import here
+        self.assertEqual(here.zone_for("Tokyo"), "Asia/Tokyo")
+        self.assertEqual(here.zone_for(" SG "), "Asia/Singapore")
+        self.assertEqual(here.zone_for("Europe/London"), "Europe/London")
+        self.assertIsNone(here.zone_for("Narnia"))
+        self.assertEqual(here.zone_for_coords(1.29, 103.85), "Asia/Singapore")
+        self.assertIsNone(here.zone_for_coords(51.5, -0.1))

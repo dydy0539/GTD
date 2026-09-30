@@ -26,9 +26,15 @@ def apply(store: Store, decisions) -> list[str]:
     {"id": ..., "decision": ..., "project": ..., "note": ..., "calendar": {...}}; a project adds a
     "project:<name>" tag, a note is appended, a calendar dict ({start, location, summary})
     changes the item's appointment. Unknown ids and values are reported, not fatal."""
-    if isinstance(decisions, dict):
-        decisions = [{"id": k, **(v if isinstance(v, dict) else {"decision": v})} for k, v in decisions.items()]
     report = []
+    if isinstance(decisions, dict):
+        here = decisions.pop("_here", None)
+        if here and here.get("timezone"):  # the page's record of your phone's time zone
+            from .here import label, set_here, zone_for
+            zone = zone_for(here["timezone"])
+            if zone and set_here(store, zone, "page", here.get("at")):
+                report.append(f"  ✓ 📍 now in {label(zone)} time ({zone})")
+        decisions = [{"id": k, **(v if isinstance(v, dict) else {"decision": v})} for k, v in decisions.items()]
     for d in decisions:
         item_id, choice = d.get("id", ""), d.get("decision", "")
         if d.get("calendar"):

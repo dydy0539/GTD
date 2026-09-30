@@ -217,6 +217,24 @@ def _clean(text: str) -> str:
 
 
 def from_self_email(raw: bytes, *, via: str = "email-to-self") -> list[tuple[Item, dict[str, bytes]]]:
+    """Mail you sent to your capture address → inbox items (see _self_email_items).
+
+    Each item records when you sent it, with your phone's UTC offset (sent_at),
+    which tells the calendar which local time "Friday 3pm" means."""
+    out = _self_email_items(raw, via=via)
+    date = email.message_from_bytes(raw, policy=email.policy.default).get("Date")
+    if date:
+        try:
+            sent = parsedate_to_datetime(str(date)).isoformat()
+        except (TypeError, ValueError):
+            sent = None
+        for item, _ in out:
+            if sent:
+                item.source.setdefault("sent_at", sent)
+    return out
+
+
+def _self_email_items(raw: bytes, *, via: str) -> list[tuple[Item, dict[str, bytes]]]:
     """Mail you sent to your capture address → inbox items.
 
     Share-sheet mail from phones is turned into what it really is:

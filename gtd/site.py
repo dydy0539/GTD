@@ -46,8 +46,8 @@ def _record(i: Item) -> dict:
     }
 
 
-def page(items: list[Item]) -> str:
-    data = json.dumps({"generated": now().isoformat(), "items": [_record(i) for i in items]},
+def page(items: list[Item], here: str = "") -> str:
+    data = json.dumps({"generated": now().isoformat(), "here": here, "items": [_record(i) for i in items]},
                       ensure_ascii=False).replace("</", "<\\/")
     return TEMPLATE.replace("__DATA__", data)
 
@@ -229,8 +229,15 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   ];
   const kindOf = it => KINDS.find(k => k[2](it))[0];
 
+  // Where am I: the phone's time zone, so "Friday 3pm" is read as local time at the next refresh
+  const phoneTz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; } })();
+  if (db && phoneTz && phoneTz !== D.here) {
+    db.doc('settings/here').set({timezone: phoneTz, at: new Date().toISOString()}).catch(() => {});
+  }
+  const hereLabel = z => (z || '').split('/').pop().replace(/_/g, ' ');
   document.getElementById('gen').textContent =
     'Updated ' + new Date(D.generated).toLocaleString(undefined, {weekday:'short', hour:'2-digit', minute:'2-digit'}) +
+    (D.here ? ' · times in ' + hereLabel(D.here) + (phoneTz && phoneTz !== D.here ? ' → ' + hereLabel(phoneTz) + ' from next refresh' : '') : '') +
     (db ? '' : ' · read-only here: open it on claude.ai to sort items');
 
   function drawSummary(){
