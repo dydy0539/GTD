@@ -37,8 +37,9 @@ import hashlib, json, re, sys
 from pathlib import Path
 out = Path(sys.argv[1])
 page = (out / "gtd-in-tray.html").read_text(encoding="utf-8")
-items = json.loads(re.search(r'id="data">(.*?)</script>', page, re.S).group(1).replace("<\\/", "</"))["items"]
-digest = hashlib.sha256(json.dumps(items, sort_keys=True).encode()).hexdigest()
+data = json.loads(re.search(r'id="data">(.*?)</script>', page, re.S).group(1).replace("<\\/", "</"))
+data.pop("generated", None)  # the items and where you are, not the time of rendering
+digest = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 old = (out / ".published").read_text().strip() if (out / ".published").exists() else ""
 (out / ".pending").write_text(digest)
 print("UNCHANGED" if digest == old else "CHANGED")
