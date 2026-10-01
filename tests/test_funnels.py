@@ -806,3 +806,28 @@ class ProjectsBackupTest(unittest.TestCase):
             page = site.page([])
             self.assertIn('id="proj-view"', page)
             self.assertIn("#projects", page)
+
+
+class SomedayTest(unittest.TestCase):
+    def test_someday_button_and_new_ideas(self):
+        import json as _json, re as _re
+        from gtd import cli, site
+        from gtd.decide import apply
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            a, _ = store.add(adapters.from_text("Learn to sail", via="telegram"))
+            report = apply(store, {a.id: "someday",
+                                   "_adds": [{"text": "Visit Patagonia", "status": "someday", "at": "2026-10-01T02:00:00Z"},
+                                             {"text": "  "}]})
+            self.assertEqual(len(report), 2)
+            someday = {i.title: i for i in store.items(status="someday")}
+            self.assertEqual(set(someday), {"Learn to sail", "Visit Patagonia"})
+            self.assertEqual(someday["Visit Patagonia"].via, "page")
+            self.assertEqual(list(store.items()), [])                     # out of the in-tray
+            page = Path(tmp) / "page.html"
+            cli.main(["--home", tmp, "render", "--page", str(page)])
+            data = _json.loads(_re.search(r'id="data">(.*?)</script>', page.read_text(), _re.S).group(1))
+            self.assertEqual({r["status"] for r in data["items"]}, {"someday"})
+            self.assertIn("In-tray page", {r["source"] for r in data["items"]})
+            cli.main(["--home", tmp, "decide", a.id, "inbox"])            # and back again
+            self.assertEqual([i.title for i in store.items()], ["Learn to sail"])

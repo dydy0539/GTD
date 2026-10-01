@@ -258,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
 
     d = sub.add_parser("decide", help="trash / review later / archive items (or move them back)")
     d.add_argument("target", help="item id, or a JSON file of decisions from the In-tray page")
-    d.add_argument("decision", nargs="?", choices=["trash", "later", "reference", "inbox"])
+    d.add_argument("decision", nargs="?", choices=["trash", "later", "reference", "someday", "inbox"])
     d.add_argument("--project", help="file it under a project (adds a project:<name> tag)")
     d.add_argument("--note", help="append a note, e.g. why it's kept")
     d.set_defaults(fn=cmd_decide)

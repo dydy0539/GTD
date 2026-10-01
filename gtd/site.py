@@ -13,11 +13,11 @@ from .model import Item, now
 
 SOURCES = {  # item.via → label shown in the filters
     "telegram": "Telegram", "email-to-self": "Email to self", "gmail": "Gmail",
-    "feed": "YouTube & feeds", "cli": "Laptop", "claude": "Claude",
+    "feed": "YouTube & feeds", "cli": "Laptop", "claude": "Claude", "page": "In-tray page",
 }
 
 
-SHOWN = ("inbox", "later", "reference")  # statuses the page lists (trash stays out)
+SHOWN = ("inbox", "later", "someday", "reference")  # statuses the page lists (trash stays out)
 
 
 def _record(i: Item) -> dict:
@@ -201,6 +201,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 .nextlist .nx small{color:var(--faint);font-size:12px}
 .pick{grid-column:2/-1;display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:13px}
 .pick select{font:14px var(--sans);padding:5px 8px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);max-width:100%}
+.addbox{display:flex;gap:8px;margin-bottom:12px}
+.addbox input{flex:1;min-width:0;font:15px var(--sans);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 12px}
 .empty{color:var(--muted);padding:28px 16px;text-align:center;background:var(--surface);border:1px dashed var(--line);border-radius:10px}
 @media (max-width:480px){.it{grid-template-columns:24px 1fr}.age{grid-column:2;text-align:left}}
 @media (prefers-reduced-motion:no-preference){.it{transition:background .15s}.it:hover{background:var(--ground)}}
@@ -246,9 +248,9 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   // Triage choices live in the page's database (decisions/<item id> = {decision, at});
   // `gtd decide` later writes them into the items themselves.
-  const VIEWS = [['inbox','In-tray'], ['later','Review later'], ['reference','Archive'], ['trash','Trash']];
-  const ACTIONS = {trash:'🗑 Trash', later:'⏳ Review later', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
-  const DONE = {trash:'Moved to Trash', later:'Saved for review later', reference:'Archived for reference', inbox:'Back in the in-tray'};
+  const VIEWS = [['inbox','In-tray'], ['later','Review later'], ['someday','Someday / maybe'], ['reference','Archive'], ['trash','Trash']];
+  const ACTIONS = {trash:'🗑 Trash', later:'⏳ Review later', someday:'💭 Someday', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
+  const DONE = {trash:'Moved to Trash', later:'Saved for review later', someday:'Moved to Someday / maybe', reference:'Archived for reference', inbox:'Back in the in-tray'};
   const decided = {}, edits = {};
   let editing = '', picking = '';
   const statusOf = it => (decided[it.id] && decided[it.id].decision) || it.status;
@@ -395,6 +397,13 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       snap.docs.forEach(d => { const v = d.data(); if (v && ACTIONS[v.decision]) decided[d.id] = v; });
       render();
     }, () => { db = null; render(); });
+    db.collection('adds').onSnapshot(snap => {
+      for (let i = all.length - 1; i >= 0; i--) if (all[i].pending) all.splice(i, 1);
+      snap.docs.forEach(d => { const v = d.data(); if (v && v.text) all.unshift({id: 'add:' + d.id, status: v.status || 'someday', pending: true,
+        title: v.text, icon: '💭', channel: 'text', via: 'page', source: 'In-tray page', url: '', at: v.at || new Date().toISOString(),
+        who: '', note: '', snippet: '', tags: [], priority: '', calendar: null}); });
+      render();
+    }, () => {});
     db.collection('edits').onSnapshot(snap => {
       for (const k of Object.keys(edits)) delete edits[k];
       snap.docs.forEach(d => { const v = d.data(); if (v && v.start) edits[d.id] = v; });
@@ -426,7 +435,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
         <div class="btns"><button class="act save cal-save" data-id="${esc(it.id)}">Save</button><button class="act cal-cancel">Cancel</button></div></div>`;
     }
     const st = statusOf(it);
-    const acts = db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox'))
+    const acts = it.pending ? '<div class="acts"><span class="ro">Saved — syncs at the next refresh</span></div>' : db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox'))
       .map(d => `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}${st !== 'trash' ? `<button class="act to-proj" data-id="${esc(it.id)}">📁 Project</button>` : ''}</div>` +
       (picking === it.id ? `<div class="pick"><select data-id="${esc(it.id)}" class="proj-pick"><option value="">File under project…</option>
         ${activeProjects().map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
@@ -441,14 +450,16 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   }
 
   const EMPTY = {inbox: 'The tray is empty. Inbox zero.', later: 'Nothing saved for review later.',
-                 reference: 'Nothing archived yet.', trash: 'Trash is empty.'};
+                 reference: 'Nothing archived yet.', trash: 'Trash is empty.',
+                 someday: 'Nothing here yet — things you might do one day, but not now.'};
   function draw(){
     document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.g === group)));
     const items = all.filter(it => statusOf(it) === view);
     const shown = items.filter(it => (!source || it.source === source) &&
       (!q || [it.title, it.who, it.note, it.snippet, it.tags.join(' '), it.source].join(' ').toLowerCase().includes(q)));
     const out = document.getElementById('out');
-    if (!shown.length) { out.innerHTML = `<div class="empty">${items.length ? 'Nothing matches this search or filter.' : EMPTY[view]}</div>`; return; }
+    const addbox = view === 'someday' && db ? `<div class="addbox"><input id="someday-new" placeholder="Something you might want to do one day…" aria-label="New someday / maybe idea" value="${esc(somedayDraft)}"><button class="primary" id="someday-add">Add</button></div>` : '';
+    if (!shown.length) { out.innerHTML = addbox + `<div class="empty">${items.length ? 'Nothing matches this search or filter.' : EMPTY[view]}</div>`; return; }
     let groups;
     if (group === 'kind') groups = KINDS.map(([k, label]) => [label, shown.filter(it => kindOf(it) === k)]);
     else if (group === 'source') groups = Object.keys(counts).map(s => [s, shown.filter(it => it.source === s)]);
@@ -457,7 +468,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       shown.forEach(it => { const d = fmtDay(new Date(it.at)); byDay.set(d, [...(byDay.get(d) || []), it]); });
       groups = [...byDay.entries()];
     }
-    out.innerHTML = groups.filter(g => g[1].length).map(([label, list]) =>
+    out.innerHTML = addbox + groups.filter(g => g[1].length).map(([label, list]) =>
       `<section><h2>${esc(label)} <span class="n">${list.length}</span></h2><div class="list">${list.map(row).join('')}</div></section>`).join('');
   }
   // ================= Projects =================
@@ -669,6 +680,18 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       drawProjects();
     }
   });
+  // Someday / maybe: type an idea straight in
+  let somedayDraft = '';
+  async function addSomeday(){
+    const box = document.getElementById('someday-new'); const text = (box && box.value || '').trim();
+    if (!text || !db) return;
+    somedayDraft = '';
+    try { await db.collection('adds').doc().set({text, status: 'someday', at: new Date().toISOString()}); say('Added to Someday / maybe: ' + text); }
+    catch (e) { somedayDraft = text; draw(); say('Couldn’t save that. Try again.'); }
+  }
+  document.getElementById('out').addEventListener('input', e => { if (e.target.id === 'someday-new') somedayDraft = e.target.value; });
+  document.getElementById('out').addEventListener('keydown', e => { if (e.target.id === 'someday-new' && e.key === 'Enter') addSomeday(); });
+  document.getElementById('out').addEventListener('click', e => { if (e.target.closest('#someday-add')) addSomeday(); });
   // In-tray row → project
   document.getElementById('out').addEventListener('change', e => {
     const sel = e.target.closest('.proj-pick'); if (!sel || !sel.value) return;

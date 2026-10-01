@@ -13,6 +13,7 @@ DECISIONS = {
     "trash": "Trash",
     "later": "Review later",
     "reference": "Archive (reference)",
+    "someday": "Someday / maybe",
     "inbox": "Back to in-tray",
 }
 
@@ -34,6 +35,8 @@ def apply(store: Store, decisions) -> list[str]:
             zone = zone_for(here["timezone"])
             if zone and set_here(store, zone, "page", here.get("at")):
                 report.append(f"  ✓ 📍 now in {label(zone)} time ({zone})")
+        for new in decisions.pop("_adds", None) or []:  # ideas typed straight into the page
+            report += _add(store, new)
         decisions = [{"id": k, **(v if isinstance(v, dict) else {"decision": v})} for k, v in decisions.items()]
     for d in decisions:
         item_id, choice = d.get("id", ""), d.get("decision", "")
@@ -83,3 +86,16 @@ def _reschedule(store: Store, item_id: str, change: dict) -> list[str]:
     store.log("rescheduled", item.id, start=cal["start"], location=cal["location"])
     where = f" · {cal['location']}" if cal["location"] else ""
     return [f"  ✓ 📅 {cal['summary']} — {cal['start'].replace('T', ' ')}{where}"[:120]]
+
+
+def _add(store: Store, new: dict) -> list[str]:
+    from .adapters import from_text
+    text, status = (new.get("text") or "").strip(), new.get("status") or "someday"
+    if not text or status not in DECISIONS:
+        return []
+    item, created = store.add(from_text(text, via="page"))
+    if item.status != status:
+        item.status = status
+        store.save(item)
+    store.log("decided", item.id, decision=status, previous="new", **({"at": new["at"]} if new.get("at") else {}))
+    return [f"  ✓ {DECISIONS[status]:<20} {item.title}"[:120]] if created else []
