@@ -878,3 +878,30 @@ class NextActionTest(unittest.TestCase):
             cli.main(["--home", tmp, "render", "--page", str(page)])          # done items leave the page
             data = _json.loads(_re.search(r'id="data">(.*?)</script>', page.read_text(), _re.S).group(1))
             self.assertEqual([r["title"] for r in data["items"]], ["Call the bank about the card"])
+
+
+class WaitingForTest(unittest.TestCase):
+    def test_waiting_for(self):
+        import json as _json, re as _re
+        from gtd import cli
+        from gtd.decide import apply
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            a, _ = store.add(adapters.from_text("Reimbursement for the conference", via="telegram"))
+            apply(store, {a.id: {"decision": "waiting", "at": "2026-10-01T01:00:00+00:00"},
+                          "_adds": [{"text": "Visa decision", "status": "waiting", "waiting_on": "ICA", "at": "2026-10-01T02:00:00+00:00"}]})
+            w = {i.title: i for i in store.items(status="waiting")}
+            self.assertEqual(set(w), {"Reimbursement for the conference", "Visa decision"})
+            self.assertEqual(w["Visa decision"].extra["waiting_on"], "ICA")
+            self.assertEqual(w["Reimbursement for the conference"].extra["waiting_since"], "2026-10-01T01:00:00+00:00")
+            apply(store, {a.id: {"decision": "waiting", "waiting_on": "Finance"}})   # who, set later
+            got = store.get(a.id)
+            self.assertEqual((got.status, got.extra["waiting_on"]), ("waiting", "Finance"))
+            self.assertEqual(got.extra["waiting_since"], "2026-10-01T01:00:00+00:00")  # the clock doesn't reset
+            page = Path(tmp) / "page.html"
+            cli.main(["--home", tmp, "render", "--page", str(page)])
+            data = _json.loads(_re.search(r'id="data">(.*?)</script>', page.read_text(), _re.S).group(1))
+            rec = {r["title"]: r for r in data["items"]}
+            self.assertEqual(rec["Visa decision"]["waiting_on"], "ICA")
+            apply(store, {a.id: "done"})                                                # received
+            self.assertEqual(store.get(a.id).status, "done")

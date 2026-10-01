@@ -7,6 +7,7 @@ so the repo stays the single source of truth. Items are never deleted:
 """
 from __future__ import annotations
 
+from .model import now
 from .store import Store
 
 DECISIONS = {
@@ -15,6 +16,7 @@ DECISIONS = {
     "reference": "Archive (reference)",
     "someday": "Someday / maybe",
     "next": "Next action",
+    "waiting": "Waiting for",
     "done": "Done",
     "inbox": "Back to in-tray",
 }
@@ -59,6 +61,14 @@ def apply(store: Store, decisions) -> list[str]:
         if d.get("project") and project_tag(d["project"]) not in item.tags:
             item.tags = [*item.tags, project_tag(d["project"])]
             extra["project"] = d["project"]
+        if "waiting_on" in d and d["waiting_on"] != item.extra.get("waiting_on", ""):
+            if d["waiting_on"]:
+                item.extra["waiting_on"] = d["waiting_on"]
+            else:
+                item.extra.pop("waiting_on", None)
+            extra["waiting_on"] = d["waiting_on"]
+        if choice == "waiting" and item.status != "waiting":  # the clock starts when it goes on the list
+            item.extra["waiting_since"] = d.get("at") or now().isoformat()
         if "category" in d and d["category"] != item.extra.get("category", ""):
             if d["category"]:
                 item.extra["category"] = d["category"]
@@ -103,7 +113,11 @@ def _add(store: Store, new: dict) -> list[str]:
     if not text or status not in DECISIONS:
         return []
     item, created = store.add(from_text(text, via="page"))
-    if item.status != status:
+    if new.get("waiting_on"):
+        item.extra["waiting_on"] = new["waiting_on"].strip()
+    if status == "waiting":
+        item.extra["waiting_since"] = new.get("at") or now().isoformat()
+    if item.status != status or new.get("waiting_on"):
         item.status = status
         store.save(item)
     store.log("decided", item.id, decision=status, previous="new", **({"at": new["at"]} if new.get("at") else {}))

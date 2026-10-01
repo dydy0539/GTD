@@ -17,7 +17,7 @@ SOURCES = {  # item.via → label shown in the filters
 }
 
 
-SHOWN = ("inbox", "next", "later", "someday", "reference")  # statuses the page lists (trash stays out)
+SHOWN = ("inbox", "next", "waiting", "later", "someday", "reference")  # statuses the page lists (trash stays out)
 
 
 def _record(i: Item) -> dict:
@@ -35,7 +35,8 @@ def _record(i: Item) -> dict:
     if snippet.lower().startswith(i.title.lower()[:40]):  # preview that only repeats the title
         snippet = snippet[len(i.title):].strip(" .·-—:") if len(snippet) > len(i.title) + 20 else ""
     return {
-        "id": i.id, "status": i.status, "category": i.extra.get("category", ""), "title": title, "icon": i.icon, "channel": i.channel,
+        "id": i.id, "status": i.status, "category": i.extra.get("category", ""),
+        "waiting_on": i.extra.get("waiting_on", ""), "waiting_since": i.extra.get("waiting_since", ""), "title": title, "icon": i.icon, "channel": i.channel,
         "via": i.via, "source": SOURCES.get(i.via, i.via),
         "url": src.get("url") or src.get("link") or "",
         "at": i.captured_at.isoformat(), "who": who[:80],
@@ -155,7 +156,11 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 .cal-form .btns{grid-column:1/-1;display:flex;gap:8px}
 .cal-form .save{background:var(--cal);color:var(--surface);border-color:var(--cal)}
 #proj-view,#tray-view,#someday-view{display:grid;gap:18px}
-#proj-view[hidden],#tray-view[hidden],#someday-view[hidden],#next-view[hidden]{display:none}
+#proj-view[hidden],#tray-view[hidden],#someday-view[hidden],#next-view[hidden],#wait-view[hidden]{display:none}
+#wait-view{display:grid;gap:18px}
+.addbox2{display:grid;grid-template-columns:2fr 1fr auto;gap:8px;margin-bottom:12px}
+.addbox2 input{min-width:0;font:15px var(--sans);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 12px}
+@media (max-width:480px){.addbox2{grid-template-columns:1fr 1fr}.addbox2 .primary{grid-column:1/-1}}
 #next-view{display:grid;gap:18px}
 .nlinked{display:grid;gap:4px;width:100%}
 .nlinked .nl{display:flex;gap:8px;align-items:baseline;font-size:14px}
@@ -213,7 +218,14 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 @media (prefers-reduced-motion:no-preference){.it{transition:background .15s}.it:hover{background:var(--ground)}}
 </style>
 <div class="wrap">
-  <nav class="apps" aria-label="Pages"><a href="#tray" id="to-tray">📥 In-tray</a><a href="#next" id="to-next">✅ Next actions</a><a href="#projects" id="to-proj">🎯 Projects</a><a href="#someday" id="to-someday">💭 Someday / maybe</a></nav>
+  <nav class="apps" aria-label="Pages"><a href="#tray" id="to-tray">📥 In-tray</a><a href="#next" id="to-next">✅ Next actions</a><a href="#waiting" id="to-wait">🕓 Waiting for</a><a href="#projects" id="to-proj">🎯 Projects</a><a href="#someday" id="to-someday">💭 Someday / maybe</a></nav>
+  <div id="wait-view" hidden>
+    <header class="head">
+      <h1>Waiting for</h1>
+      <div class="sum" id="wsum"></div>
+    </header>
+    <main id="wout"></main>
+  </div>
   <div id="next-view" hidden>
     <header class="head">
       <h1>Next actions</h1>
@@ -267,13 +279,16 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   // Triage choices live in the page's database (decisions/<item id> = {decision, at});
   // `gtd decide` later writes them into the items themselves.
-  const onLists = (ev, fn) => ['out', 'sout', 'nout', 'pout'].forEach(id => document.getElementById(id).addEventListener(ev, fn));
+  const onLists = (ev, fn) => ['out', 'sout', 'nout', 'wout', 'pout'].forEach(id => document.getElementById(id).addEventListener(ev, fn));
   const VIEWS = [['inbox','In-tray'], ['later','Review later'], ['reference','Archive'], ['trash','Trash']];
-  const ACTIONS = {done:'✓ Done', next:'✅ Next', trash:'🗑 Trash', later:'⏳ Review later', someday:'💭 Someday', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
-  const DONE = {done:'Done', next:'Moved to Next actions', trash:'Moved to Trash', later:'Saved for review later', someday:'Moved to Someday / maybe', reference:'Archived for reference', inbox:'Back in the in-tray'};
+  const ACTIONS = {done:'✓ Done', next:'✅ Next', waiting:'🕓 Waiting', trash:'🗑 Trash', later:'⏳ Review later', someday:'💭 Someday', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
+  const DONE = {done:'Done', next:'Moved to Next actions', waiting:'Moved to Waiting for', trash:'Moved to Trash', later:'Saved for review later', someday:'Moved to Someday / maybe', reference:'Archived for reference', inbox:'Back in the in-tray'};
   const decided = {}, edits = {};
-  let editing = '', picking = '', filing = '', newCatFor = '';
+  let editing = '', picking = '', filing = '', newCatFor = '', whoFor = '';
   const categories = new Set();  // archive categories: from the page's database + those already used
+  const waitOf = it => (decided[it.id] && decided[it.id].waiting_on !== undefined ? decided[it.id].waiting_on : it.waiting_on) || '';
+  const waitingAge = it => { const d = decided[it.id], t = Date.parse((d && d.decision === 'waiting' && d.at) || it.waiting_since || it.at);
+    const days = Math.max(0, Math.floor((Date.now() - t) / 864e5)); return days < 1 ? 'since today' : `waiting ${days}d`; };
   const catOf = it => (decided[it.id] && decided[it.id].category) || it.category || '';
   const allCategories = () => [...new Set([...categories, ...all.map(catOf).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
   const statusOf = it => (decided[it.id] && decided[it.id].decision) || it.status;
@@ -412,7 +427,12 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     if (tc) { filing = filing === tc.dataset.id ? '' : tc.dataset.id; picking = ''; render(); return; }
     const tp = e.target.closest('.to-proj');
     if (tp) { picking = picking === tp.dataset.id ? '' : tp.dataset.id; render(); return; }
-    if (e.target.closest('.pick-cancel')) { picking = ''; filing = ''; newCatFor = ''; render(); return; }
+    if (e.target.closest('.pick-cancel')) { picking = ''; filing = ''; newCatFor = ''; whoFor = ''; render(); return; }
+    const tw = e.target.closest('.to-who');
+    if (tw) { whoFor = whoFor === tw.dataset.id ? '' : tw.dataset.id; render();
+      const box = document.querySelector(`.who-new[data-id="${CSS.escape(tw.dataset.id)}"]`); if (box) box.focus(); return; }
+    const ws = e.target.closest('.who-save');
+    if (ws) { saveWho(ws.dataset.id); return; }
     const ns = e.target.closest('.cat-new-save');
     if (ns) { saveNewCategory(ns.dataset.id); return; }
     const b = e.target.closest('.act'); if (!b || !b.dataset.d) return;
@@ -431,7 +451,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     db.collection('adds').onSnapshot(snap => {
       for (let i = all.length - 1; i >= 0; i--) if (all[i].pending) all.splice(i, 1);
       snap.docs.forEach(d => { const v = d.data(); if (v && v.text) all.unshift({id: 'add:' + d.id, status: v.status || 'someday', pending: true,
-        title: v.text, icon: v.status === 'next' ? '✅' : '💭', channel: 'text', via: 'page', source: 'In-tray page', url: '', at: v.at || new Date().toISOString(),
+        title: v.text, icon: v.status === 'next' ? '✅' : v.status === 'waiting' ? '🕓' : '💭', waiting_on: v.waiting_on || '', waiting_since: v.at || '', channel: 'text', via: 'page', source: 'In-tray page', url: '', at: v.at || new Date().toISOString(),
         who: '', note: '', snippet: '', tags: [], priority: '', calendar: null}); });
       render();
     }, () => {});
@@ -448,6 +468,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const meta = [it.who, it.source].filter(Boolean).map(esc).join(' · ');
     const tags = [...(it.priority === 'high' ? ['<span class="tag p-high">high</span>'] : []),
                   ...(it.priority === 'low' ? ['<span class="tag">low</span>'] : []),
+                  ...(statusOf(it) === 'waiting' ? [`<span class="tag">🕓 ${waitOf(it) ? 'waiting on ' + esc(waitOf(it)) : 'waiting'} · ${waitingAge(it)}</span>`] : []),
                   ...(catOf(it) && statusOf(it) === 'reference' ? [`<span class="tag">🗄 ${esc(catOf(it))}</span>`] : []),
                   ...it.tags.map(t => `<span class="tag">${esc(t)}</span>`)].join('');
     let cal = '';
@@ -467,12 +488,14 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
         <div class="btns"><button class="act save cal-save" data-id="${esc(it.id)}">Save</button><button class="act cal-cancel">Cancel</button></div></div>`;
     }
     const st = statusOf(it);
-    const acts = it.pending ? '<div class="acts"><span class="ro">Saved — syncs at the next refresh</span></div>' : db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox') && (d !== 'done' || st === 'next'))
+    const acts = it.pending ? '<div class="acts"><span class="ro">Saved — syncs at the next refresh</span></div>' : db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox') && (d !== 'done' || st === 'next' || st === 'waiting'))
       .map(d => d === 'reference' ? `<button class="act reference to-cat" data-id="${esc(it.id)}">${ACTIONS[d]} ▾</button>`
-                                  : `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}${st === 'reference' ? `<button class="act to-cat" data-id="${esc(it.id)}">🏷 Category ▾</button>` : ''}${st !== 'trash' ? `<button class="act to-proj" data-id="${esc(it.id)}">📁 Project</button>` : ''}</div>` +
+                                  : `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}${st === 'reference' ? `<button class="act to-cat" data-id="${esc(it.id)}">🏷 Category ▾</button>` : ''}${st === 'waiting' ? `<button class="act to-who" data-id="${esc(it.id)}">👤 ${waitOf(it) ? 'Change who' : 'Who?'}</button>` : ''}${st !== 'trash' ? `<button class="act to-proj" data-id="${esc(it.id)}">📁 Project</button>` : ''}</div>` +
       (filing === it.id ? `<div class="pick"><select data-id="${esc(it.id)}" class="cat-pick"><option value="">Archive under…</option>
         ${allCategories().map(c => `<option value="${esc(c)}"${c === catOf(it) ? ' selected' : ''}>${esc(c)}</option>`).join('')}
         <option value="__none">No category</option><option value="__new">➕ New category…</option></select><button class="act pick-cancel">Cancel</button></div>` : '') +
+      (whoFor === it.id ? `<div class="pick"><input class="who-new" data-id="${esc(it.id)}" value="${esc(waitOf(it))}" placeholder="Waiting on who? (e.g. Dr Tan, HR)" aria-label="Waiting on" style="flex:1;min-width:0;font:15px var(--sans);padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)">
+        <button class="act who-save" data-id="${esc(it.id)}">Save</button><button class="act pick-cancel">Cancel</button></div>` : '') +
       (newCatFor === it.id ? `<div class="pick"><input class="cat-new" data-id="${esc(it.id)}" placeholder="New category name" aria-label="New category name" style="flex:1;min-width:0;font:15px var(--sans);padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)">
         <button class="act cat-new-save" data-id="${esc(it.id)}">Save</button><button class="act pick-cancel">Cancel</button></div>` : '') +
       (picking === it.id ? `<div class="pick"><select data-id="${esc(it.id)}" class="proj-pick"><option value="">File under project…</option>
@@ -750,6 +773,17 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   onLists('input', e => { if (e.target.id === 'someday-new') somedayDraft = e.target.value; });
   onLists('keydown', e => { if (e.target.id === 'someday-new' && e.key === 'Enter') addSomeday(); });
   onLists('click', e => { if (e.target.closest('#someday-add')) addSomeday(); });
+  async function saveWho(id){
+    const box = document.querySelector(`.who-new[data-id="${CSS.escape(id)}"]`);
+    const who = (box && box.value || '').trim(); const it = all.find(x => x.id === id); whoFor = '';
+    if (!it) return;
+    const cur = decided[id] || {};
+    const entry = {...cur, decision: cur.decision || 'waiting', at: cur.at || new Date().toISOString(), waiting_on: who};
+    decided[id] = entry; render();
+    try { await db.doc('decisions/' + id).set(entry); say(who ? 'Waiting on ' + who : 'Cleared who'); }
+    catch (e) { say('Couldn’t save that. Try again.'); }
+  }
+  onLists('keydown', e => { if (e.target.classList.contains('who-new') && e.key === 'Enter') saveWho(e.target.dataset.id); });
   async function saveNewCategory(id){
     const box = document.querySelector(`.cat-new[data-id="${CSS.escape(id)}"]`);
     const cat = (box && box.value || '').trim();
@@ -841,9 +875,39 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   document.getElementById('nout').addEventListener('keydown', e => { if (e.target.id === 'next-new' && e.key === 'Enter') addNext(); });
   document.getElementById('nout').addEventListener('click', e => { if (e.target.closest('#next-add')) addNext(); });
 
+  let waitDraft = {text: '', who: ''};
+  function drawWaiting(){
+    const items = all.filter(it => statusOf(it) === 'waiting')
+      .sort((a, b) => Date.parse((decided[a.id] && decided[a.id].at) || a.waiting_since || a.at) - Date.parse((decided[b.id] && decided[b.id].at) || b.waiting_since || b.at));  // longest wait first
+    const old = items.filter(it => /waiting (\d+)d/.test(waitingAge(it)) && +waitingAge(it).match(/\d+/)[0] >= 7).length;
+    document.getElementById('wsum').innerHTML = `<span><b>${items.length}</b> waiting</span>` +
+      (old ? `<span class="warn"><b>${old}</b> over a week — time to chase?</span>` : '') +
+      '<span>Things you’ve handed off or are waiting to hear back on.</span>';
+    const addbox = db ? `<div class="addbox2"><input id="wait-new" placeholder="What are you waiting for?" aria-label="What are you waiting for" value="${esc(waitDraft.text)}"><input id="wait-who" placeholder="From whom" aria-label="From whom" value="${esc(waitDraft.who)}"><button class="primary" id="wait-add">Add</button></div>` : '';
+    const byWho = new Map();
+    items.forEach(it => { const k = waitOf(it) || ''; byWho.set(k, [...(byWho.get(k) || []), it]); });
+    const groups = [...byWho.entries()].sort((a, b) => a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0]));
+    document.getElementById('wout').innerHTML = addbox + (items.length
+      ? groups.map(([who, list]) => `<section><h2>${who ? '👤 ' + esc(who) : 'Not sure who yet'} <span class="n">${list.length}</span></h2><div class="list">${list.map(row).join('')}</div></section>`).join('')
+      : '<div class="empty">Nothing you’re waiting on. Use 🕓 Waiting on an In-tray item, or add one above.</div>');
+  }
+  async function addWaiting(){
+    const t = document.getElementById('wait-new'), w = document.getElementById('wait-who');
+    const text = (t && t.value || '').trim(), who = (w && w.value || '').trim();
+    if (!text || !db) return;
+    waitDraft = {text: '', who: ''};
+    try { await db.collection('adds').doc().set({text, status: 'waiting', waiting_on: who, at: new Date().toISOString()});
+          say('Waiting for: ' + text); }
+    catch (e) { waitDraft = {text, who}; render(); say('Couldn’t save that. Try again.'); }
+  }
+  document.getElementById('wout').addEventListener('input', e => {
+    if (e.target.id === 'wait-new') waitDraft.text = e.target.value; if (e.target.id === 'wait-who') waitDraft.who = e.target.value; });
+  document.getElementById('wout').addEventListener('keydown', e => { if ((e.target.id === 'wait-new' || e.target.id === 'wait-who') && e.key === 'Enter') addWaiting(); });
+  document.getElementById('wout').addEventListener('click', e => { if (e.target.closest('#wait-add')) addWaiting(); });
+
   function route(){
-    const page = location.hash === '#projects' ? 'proj' : location.hash === '#someday' ? 'someday' : location.hash === '#next' ? 'next' : 'tray';
-    for (const [v, nav] of [['proj', 'to-proj'], ['someday', 'to-someday'], ['next', 'to-next'], ['tray', 'to-tray']]) {
+    const page = location.hash === '#projects' ? 'proj' : location.hash === '#someday' ? 'someday' : location.hash === '#next' ? 'next' : location.hash === '#waiting' ? 'wait' : 'tray';
+    for (const [v, nav] of [['proj', 'to-proj'], ['someday', 'to-someday'], ['next', 'to-next'], ['wait', 'to-wait'], ['tray', 'to-tray']]) {
       document.getElementById(v + '-view').hidden = page !== v;
       document.getElementById(nav).setAttribute('aria-current', page === v ? 'page' : 'false');
     }
@@ -851,7 +915,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   }
   window.addEventListener('hashchange', route);
 
-  function render(){ drawSummary(); drawChips(); draw(); if (location.hash === '#projects') drawProjects(); if (location.hash === '#someday') drawSomeday(); if (location.hash === '#next') drawNext(); }
+  function render(){ drawSummary(); drawChips(); draw(); if (location.hash === '#projects') drawProjects(); if (location.hash === '#someday') drawSomeday(); if (location.hash === '#next') drawNext(); if (location.hash === '#waiting') drawWaiting(); }
   route();
 })();
 </script>
