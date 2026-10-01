@@ -188,7 +188,12 @@ def cmd_run(store: Store, a: argparse.Namespace) -> int:
 
     steps = []
     cfg = gdrive.config(store)
-    drv = gdrive.Drive.from_env() if cfg else None
+    drv, failed = None, []
+    try:
+        drv = gdrive.Drive.from_env() if cfg else None
+    except Exception as e:  # a bad key must never stop the capture itself
+        print(f"error in Drive: {e}", file=sys.stderr)
+        failed.append("Drive")
     if drv:  # taps from the In-tray page first, so the page data written below includes them
         steps.append(("Page taps (Drive)", lambda s_, _: print("\n".join(gdrive.pull(s_, drv, cfg))), None))
     if os.environ.get("GMAIL_APP_PASSWORD"):
@@ -203,7 +208,6 @@ def cmd_run(store: Store, a: argparse.Namespace) -> int:
     if drv:
         steps.append(("Page data (Drive)", lambda s_, _: print("\n".join(gdrive.push(s_, drv, cfg))), None))
     before = {i.id for i in store.items(status=None)}  # everything before this run, to tell you what's new
-    failed = []
     for name, fn, args in steps:
         print(f"── {name}")
         try:

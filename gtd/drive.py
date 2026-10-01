@@ -58,7 +58,21 @@ class Drive:
     @classmethod
     def from_env(cls) -> "Drive | None":
         info = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
-        return cls(json.loads(info)) if info else None
+        return cls(parse_key(info)) if info else None
+
+
+def parse_key(text: str) -> dict:
+    """The service-account key file; forgives a paste that lost its outer braces."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        if text.startswith("{"):
+            raise ValueError("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON: paste the whole key file again") from None
+        try:
+            return json.loads("{" + text.strip().rstrip(",") + "}")
+        except json.JSONDecodeError:
+            raise ValueError("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON: paste the whole key file again, "
+                             "from the first { to the last }") from None
 
 
 def config(store: Store) -> dict | None:

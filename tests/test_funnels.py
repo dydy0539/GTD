@@ -1001,3 +1001,20 @@ class DriveBridgeTest(unittest.TestCase):
                 self.assertEqual(cli.notify_new(store, before), "told you about 1 new item(s)")
             self.assertEqual(sent[0]["chat_id"], 42)
             self.assertIn("Haircut Friday 3pm", sent[0]["text"])
+
+
+class DriveKeyTest(unittest.TestCase):
+    def test_key_paste_without_braces_and_bad_key_dont_stop_capture(self):
+        import json as _json
+        from gtd import cli, drive
+        key = {"type": "service_account", "client_email": "x@y.iam.gserviceaccount.com"}
+        self.assertEqual(drive.parse_key(_json.dumps(key)), key)
+        self.assertEqual(drive.parse_key(_json.dumps(key)[1:-1]), key)          # lost its { }
+        with self.assertRaises(ValueError):
+            drive.parse_key('{"type": ')
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "drive.json").write_text('{"page": "P", "outbox": "O"}')
+            with unittest.mock.patch.dict("os.environ", {"GOOGLE_SERVICE_ACCOUNT_JSON": "nonsense: [", "GMAIL_APP_PASSWORD": "",
+                                                         "TELEGRAM_BOT_TOKEN": ""}):
+                code = cli.main(["--home", tmp, "run"])                       # Drive fails, the rest still runs
+            self.assertEqual(code, 1)
