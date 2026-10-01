@@ -17,7 +17,7 @@ SOURCES = {  # item.via → label shown in the filters
 }
 
 
-SHOWN = ("inbox", "later", "someday", "reference")  # statuses the page lists (trash stays out)
+SHOWN = ("inbox", "next", "later", "someday", "reference")  # statuses the page lists (trash stays out)
 
 
 def _record(i: Item) -> dict:
@@ -155,7 +155,11 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 .cal-form .btns{grid-column:1/-1;display:flex;gap:8px}
 .cal-form .save{background:var(--cal);color:var(--surface);border-color:var(--cal)}
 #proj-view,#tray-view,#someday-view{display:grid;gap:18px}
-#proj-view[hidden],#tray-view[hidden],#someday-view[hidden]{display:none}
+#proj-view[hidden],#tray-view[hidden],#someday-view[hidden],#next-view[hidden]{display:none}
+#next-view{display:grid;gap:18px}
+.nlinked{display:grid;gap:4px;width:100%}
+.nlinked .nl{display:flex;gap:8px;align-items:baseline;font-size:14px}
+.nlinked .nl span{flex:1;min-width:0;overflow-wrap:anywhere}
 .apps{flex-wrap:wrap}
 .apps{display:flex;gap:6px;padding-top:4px}
 .apps a{font:600 14px var(--sans);color:var(--muted);text-decoration:none;padding:7px 14px;border-radius:999px;
@@ -209,7 +213,14 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 @media (prefers-reduced-motion:no-preference){.it{transition:background .15s}.it:hover{background:var(--ground)}}
 </style>
 <div class="wrap">
-  <nav class="apps" aria-label="Pages"><a href="#tray" id="to-tray">📥 In-tray</a><a href="#projects" id="to-proj">🎯 Projects</a><a href="#someday" id="to-someday">💭 Someday / maybe</a></nav>
+  <nav class="apps" aria-label="Pages"><a href="#tray" id="to-tray">📥 In-tray</a><a href="#next" id="to-next">✅ Next actions</a><a href="#projects" id="to-proj">🎯 Projects</a><a href="#someday" id="to-someday">💭 Someday / maybe</a></nav>
+  <div id="next-view" hidden>
+    <header class="head">
+      <h1>Next actions</h1>
+      <div class="sum" id="nsum"></div>
+    </header>
+    <main id="nout"></main>
+  </div>
   <div id="someday-view" hidden>
     <header class="head">
       <h1>Someday / maybe</h1>
@@ -256,10 +267,10 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   // Triage choices live in the page's database (decisions/<item id> = {decision, at});
   // `gtd decide` later writes them into the items themselves.
-  const onLists = (ev, fn) => ['out', 'sout'].forEach(id => document.getElementById(id).addEventListener(ev, fn));
+  const onLists = (ev, fn) => ['out', 'sout', 'nout', 'pout'].forEach(id => document.getElementById(id).addEventListener(ev, fn));
   const VIEWS = [['inbox','In-tray'], ['later','Review later'], ['reference','Archive'], ['trash','Trash']];
-  const ACTIONS = {trash:'🗑 Trash', later:'⏳ Review later', someday:'💭 Someday', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
-  const DONE = {trash:'Moved to Trash', later:'Saved for review later', someday:'Moved to Someday / maybe', reference:'Archived for reference', inbox:'Back in the in-tray'};
+  const ACTIONS = {done:'✓ Done', next:'✅ Next', trash:'🗑 Trash', later:'⏳ Review later', someday:'💭 Someday', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
+  const DONE = {done:'Done', next:'Moved to Next actions', trash:'Moved to Trash', later:'Saved for review later', someday:'Moved to Someday / maybe', reference:'Archived for reference', inbox:'Back in the in-tray'};
   const decided = {}, edits = {};
   let editing = '', picking = '', filing = '', newCatFor = '';
   const categories = new Set();  // archive categories: from the page's database + those already used
@@ -360,7 +371,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   async function decide(it, decision, quiet, extra){
     const before = decided[it.id];
-    decided[it.id] = {decision, at: new Date().toISOString(), ...(extra || {})};
+    decided[it.id] = {decision, at: new Date().toISOString(), ...(before && before.project ? {project: before.project} : {}), ...(extra || {})};
     render();
     try {
       await db.doc('decisions/' + it.id).set(decided[it.id]);
@@ -372,7 +383,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     }
     if (!quiet) {
       const prev = before ? before.decision : it.status;
-      say(extra && extra.project ? `Filed under ${extra.project}: ${it.title}`
+      say(extra && extra.project ? (decision === 'next' ? `Next action for ${extra.project}: ${it.title}` : `Filed under ${extra.project}: ${it.title}`)
           : extra && extra.category ? `Archived in ${extra.category}: ${it.title}` : `${DONE[decision]}: ${it.title}`,
           () => decide(it, prev, true));
     }
@@ -420,7 +431,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     db.collection('adds').onSnapshot(snap => {
       for (let i = all.length - 1; i >= 0; i--) if (all[i].pending) all.splice(i, 1);
       snap.docs.forEach(d => { const v = d.data(); if (v && v.text) all.unshift({id: 'add:' + d.id, status: v.status || 'someday', pending: true,
-        title: v.text, icon: '💭', channel: 'text', via: 'page', source: 'In-tray page', url: '', at: v.at || new Date().toISOString(),
+        title: v.text, icon: v.status === 'next' ? '✅' : '💭', channel: 'text', via: 'page', source: 'In-tray page', url: '', at: v.at || new Date().toISOString(),
         who: '', note: '', snippet: '', tags: [], priority: '', calendar: null}); });
       render();
     }, () => {});
@@ -456,7 +467,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
         <div class="btns"><button class="act save cal-save" data-id="${esc(it.id)}">Save</button><button class="act cal-cancel">Cancel</button></div></div>`;
     }
     const st = statusOf(it);
-    const acts = it.pending ? '<div class="acts"><span class="ro">Saved — syncs at the next refresh</span></div>' : db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox'))
+    const acts = it.pending ? '<div class="acts"><span class="ro">Saved — syncs at the next refresh</span></div>' : db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox') && (d !== 'done' || st === 'next'))
       .map(d => d === 'reference' ? `<button class="act reference to-cat" data-id="${esc(it.id)}">${ACTIONS[d]} ▾</button>`
                                   : `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}${st === 'reference' ? `<button class="act to-cat" data-id="${esc(it.id)}">🏷 Category ▾</button>` : ''}${st !== 'trash' ? `<button class="act to-proj" data-id="${esc(it.id)}">📁 Project</button>` : ''}</div>` +
       (filing === it.id ? `<div class="pick"><select data-id="${esc(it.id)}" class="cat-pick"><option value="">Archive under…</option>
@@ -541,14 +552,24 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     return gcalLink({summary: `${p.next.text} (${p.name})`, start: w, end, timezone: D.here || phoneTz || 'UTC', location: ''});
   }
 
+  const projectOf = it => { const d = decided[it.id]; if (d && d.project) return d.project;
+    const p = Object.values(projects).find(p => it.tags.includes(slug(p.name))); return p ? p.name : ''; };
+  const linkedNext = p => all.filter(it => statusOf(it) === 'next' && projectOf(it) === p.name);
+  function linkedBlock(p){
+    const l = linkedNext(p); if (!l.length) return '';
+    return `<div class="nlinked">${l.map(it => `<div class="nl"><span>☐ ${esc(it.title)}</span>${db && !it.pending ? `<button class="act done" data-id="${esc(it.id)}" data-d="done">✓ Done</button>` : ''}</div>`).join('')}</div>`;
+  }
   function nextBlock(p){
+    return nextMain(p) + linkedBlock(p);
+  }
+  function nextMain(p){
     const n = p.next || {};
     if (doneFor === p.id) return `<div class="pform" data-p="${esc(p.id)}">
       <label class="wide">Next action<input name="text" placeholder="The very next physical step" required></label>
       <label>When<input type="datetime-local" name="when"></label>
       <div class="btns"><button class="primary pn-save" data-p="${esc(p.id)}">Save next action</button><button class="act pn-cancel">Cancel</button></div></div>`;
     if (!n.text) return `<div class="next"><span class="lbl">Next</span><span class="goal">No next action yet</span>
-      ${db ? `<button class="act p-done" data-p="${esc(p.id)}">+ Add next action</button>` : ''}</div>`;
+      ${db ? `<button class="act p-done" data-p="${esc(p.id)}">✅ Next action</button>` : ''}</div>`;
     const [w, cls] = whenLabel(n.when), link = calLink(p);
     return `<div class="next"><span class="lbl">Next</span><span>${esc(n.text)}</span>
       ${w ? `<span class="when ${cls}">${esc(w)}</span>` : '<span class="when">no date</span>'}
@@ -585,7 +606,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   function oneoffCard(p){
     const tag = slug(p.name);
-    const filed = all.filter(it => it.tags.includes(tag) || (decided[it.id] && decided[it.id].project === p.name));
+    const filed = all.filter(it => statusOf(it) !== 'next' && (it.tags.includes(tag) || (decided[it.id] && decided[it.id].project === p.name)));
     return `<article class="card"><h3>${esc(p.name)}<span class="per">${p.status === 'done' ? 'done' : 'one-off'}</span></h3>
       <div class="goal"><b>End goal:</b> ${p.goal ? esc(p.goal) : '<i>not set yet — what does done look like?</i>'}</div>
       ${p.status !== 'done' ? nextBlock(p) : ''}
@@ -626,10 +647,6 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const sec = (label, n, body) => `<section><h2>${esc(label)} <span class="n">${n}</span></h2>${body}</section>`;
     out.innerHTML =
       (pform ? sec(pform.id ? 'Edit project' : 'New project', '', formHtml(pform)) : (db ? `<div><button class="primary" id="p-new">+ New project</button></div>` : '')) +
-      (withNext.length ? sec('Next actions', withNext.length, `<div class="nextlist">${withNext.map(p => {
-        const [w, cls] = whenLabel(p.next.when);
-        return `<div class="nx"><span>${esc(p.next.text)}<br><small>${esc(p.name)}</small></span><span class="when ${cls}" style="font:12px var(--mono)">${esc(w || '—')}</span></div>`;
-      }).join('')}</div>`) : '') +
       (rec.length ? sec('Recurring', rec.length, `<div class="pgrid">${rec.map(recurringCard).join('')}</div>`) : '') +
       (one.length ? sec('One-off', one.length, `<div class="pgrid">${one.map(oneoffCard).join('')}</div>`) : '') +
       (done.length ? sec('Done', done.length, `<div class="pgrid">${done.map(oneoffCard).join('')}</div>`) : '') +
@@ -646,14 +663,14 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     catch (e) { say('Couldn’t save the project. Try again.'); return null; }
   }
 
-  document.getElementById('pout').addEventListener('click', async e => {
+  ['pout', 'nout'].forEach(id => document.getElementById(id).addEventListener('click', async e => {
     if (!db) return;
     const t = e.target, pid = (t.closest('[data-p]') || {}).dataset?.p;
-    if (t.closest('#p-new')) { pform = {kind: 'oneoff'}; drawProjects(); return; }
-    if (t.closest('.pf-cancel')) { pform = null; fileAfterCreate = ''; drawProjects(); return; }
-    if (t.closest('.p-edit')) { pform = {id: pid, kind: projects[pid].kind}; drawProjects(); window.scrollTo({top: 0}); return; }
+    if (t.closest('#p-new')) { pform = {kind: 'oneoff'}; render(); return; }
+    if (t.closest('.pf-cancel')) { pform = null; fileAfterCreate = ''; render(); return; }
+    if (t.closest('.p-edit')) { pform = {id: pid, kind: projects[pid].kind}; render(); window.scrollTo({top: 0}); return; }
     if (t.closest('.pf-delete')) {
-      if (!deleteArmed) { deleteArmed = true; drawProjects(); setTimeout(() => { if (deleteArmed) { deleteArmed = false; drawProjects(); } }, 4000); return; }
+      if (!deleteArmed) { deleteArmed = true; render(); setTimeout(() => { if (deleteArmed) { deleteArmed = false; render(); } }, 4000); return; }
       deleteArmed = false;
       const id = pform.id; delete projects[id]; pform = null; render();
       try { await db.doc('projects/' + id).delete(); } catch (err) { say('Couldn’t delete. Try again.'); }
@@ -673,8 +690,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       fileAfterCreate = ''; render();
       return;
     }
-    if (t.closest('.p-done')) { doneFor = pid; drawProjects(); return; }
-    if (t.closest('.pn-cancel')) { doneFor = ''; drawProjects(); return; }
+    if (t.closest('.p-done')) { doneFor = pid; render(); return; }
+    if (t.closest('.pn-cancel')) { doneFor = ''; render(); return; }
     if (t.closest('.pn-save')) {
       const f = t.closest('.pform'), text = f.querySelector('[name=text]').value.trim(), when = f.querySelector('[name=when]').value;
       const p = projects[pid], prev = p.next && p.next.text;
@@ -690,7 +707,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       return;
     }
     if (t.closest('.p-other-open')) {
-      otherFor = pid; drawProjects();
+      otherFor = pid; render();
       const box = document.querySelector(`.p-other[data-p="${CSS.escape(pid)}"]`); if (box) box.focus();
       return;
     }
@@ -702,18 +719,18 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
         amount = (document.querySelector(`.p-other[data-p="${CSS.escape(pid)}"]`) || {}).value;
         otherFor = '';
       }
-      amount = +amount; if (!(amount > 0)) { drawProjects(); return; }
+      amount = +amount; if (!(amount > 0)) { render(); return; }
       const entry = {project: pid, amount, at: new Date().toISOString()};
-      const ref = db.collection('logs').doc(); logs[ref.id] = entry; drawProjects();
+      const ref = db.collection('logs').doc(); logs[ref.id] = entry; render();
       try { await ref.set(entry); say(`Logged ${amount} ${UNITS[unit] ? UNITS[unit][amount === 1 ? 0 : 1] : ''} · ${p.name}`, async () => {
-        delete logs[ref.id]; drawProjects(); try { await ref.delete(); } catch (err) {} });
-      } catch (err) { delete logs[ref.id]; drawProjects(); say('Couldn’t log that. Try again.'); }
+        delete logs[ref.id]; render(); try { await ref.delete(); } catch (err) {} });
+      } catch (err) { delete logs[ref.id]; render(); say('Couldn’t log that. Try again.'); }
       return;
     }
     const ul = t.closest('.p-unlog');
-    if (ul) { const id = ul.dataset.l; const keep = logs[id]; delete logs[id]; drawProjects();
-      try { await db.doc('logs/' + id).delete(); } catch (err) { logs[id] = keep; drawProjects(); } }
-  });
+    if (ul) { const id = ul.dataset.l; const keep = logs[id]; delete logs[id]; render();
+      try { await db.doc('logs/' + id).delete(); } catch (err) { logs[id] = keep; render(); } }
+  }));
   document.getElementById('pout').addEventListener('change', e => {
     if (e.target.name === 'kind' && pform) {  // switching type redraws the form, keeping what was typed
       const f = document.getElementById('pform');
@@ -764,7 +781,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const sel = e.target.closest('.proj-pick'); if (!sel || !sel.value) return;
     const it = all.find(x => x.id === sel.dataset.id); picking = '';
     if (sel.value === '__new') { pform = {kind: 'oneoff', name: it.title.slice(0, 80)}; fileAfterCreate = it.id; location.hash = 'projects'; return; }
-    decide(it, 'reference', false, {project: projects[sel.value].name});
+    decide(it, statusOf(it) === 'next' ? 'next' : 'reference', false, {project: projects[sel.value].name});
   });
 
   if (db) {
@@ -792,9 +809,41 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       : `<div class="empty">${EMPTY.someday}</div>`);
   }
 
+  let nextDraft = '';
+  function drawNext(){
+    const items = all.filter(it => statusOf(it) === 'next');
+    const withNext = activeProjects().filter(p => p.next && p.next.text)
+      .sort((a, b) => (a.next.when || '9999').localeCompare(b.next.when || '9999'));
+    const over = withNext.filter(p => whenLabel(p.next.when)[1] === 'over').length;
+    document.getElementById('nsum').innerHTML = `<span><b>${items.length + withNext.length}</b> next action${items.length + withNext.length === 1 ? '' : 's'}</span>` +
+      (over ? `<span class="warn"><b>${over}</b> overdue</span>` : '') + '<span>The very next physical step for each thing you’ve committed to.</span>';
+    const addbox = db ? `<div class="addbox"><input id="next-new" placeholder="Add a next action…" aria-label="New next action" value="${esc(nextDraft)}"><button class="primary" id="next-add">Add</button></div>` : '';
+    const sec = (label, n, body) => `<section><h2>${esc(label)} <span class="n">${n}</span></h2>${body}</section>`;
+    // standalone actions, grouped by the project they belong to (if any)
+    const byProject = new Map();
+    items.forEach(it => { const k = projectOf(it) || ''; byProject.set(k, [...(byProject.get(k) || []), it]); });
+    const groups = [...byProject.entries()].sort((a, b) => a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0]));
+    document.getElementById('nout').innerHTML = addbox +
+      (withNext.length ? sec('From projects', withNext.length, `<div class="pgrid">${withNext.map(p =>
+        `<article class="card"><h3>${esc(p.name)}<span class="per">${p.kind === 'recurring' ? 'recurring' : 'project'}</span></h3>${nextMain(p)}</article>`).join('')}</div>`) : '') +
+      groups.map(([proj, list]) => sec(proj ? '🎯 ' + proj : (withNext.length ? 'Other actions' : 'Actions'), list.length,
+        `<div class="list">${list.map(row).join('')}</div>`)).join('') +
+      (!items.length && !withNext.length ? '<div class="empty">No next actions yet. Use ✅ Next on an In-tray item, or add one above.</div>' : '');
+  }
+  async function addNext(){
+    const box = document.getElementById('next-new'); const text = (box && box.value || '').trim();
+    if (!text || !db) return;
+    nextDraft = '';
+    try { await db.collection('adds').doc().set({text, status: 'next', at: new Date().toISOString()}); say('Added to Next actions: ' + text); }
+    catch (e) { nextDraft = text; render(); say('Couldn’t save that. Try again.'); }
+  }
+  document.getElementById('nout').addEventListener('input', e => { if (e.target.id === 'next-new') nextDraft = e.target.value; });
+  document.getElementById('nout').addEventListener('keydown', e => { if (e.target.id === 'next-new' && e.key === 'Enter') addNext(); });
+  document.getElementById('nout').addEventListener('click', e => { if (e.target.closest('#next-add')) addNext(); });
+
   function route(){
-    const page = location.hash === '#projects' ? 'proj' : location.hash === '#someday' ? 'someday' : 'tray';
-    for (const [v, nav] of [['proj', 'to-proj'], ['someday', 'to-someday'], ['tray', 'to-tray']]) {
+    const page = location.hash === '#projects' ? 'proj' : location.hash === '#someday' ? 'someday' : location.hash === '#next' ? 'next' : 'tray';
+    for (const [v, nav] of [['proj', 'to-proj'], ['someday', 'to-someday'], ['next', 'to-next'], ['tray', 'to-tray']]) {
       document.getElementById(v + '-view').hidden = page !== v;
       document.getElementById(nav).setAttribute('aria-current', page === v ? 'page' : 'false');
     }
@@ -802,7 +851,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   }
   window.addEventListener('hashchange', route);
 
-  function render(){ drawSummary(); drawChips(); draw(); if (location.hash === '#projects') drawProjects(); if (location.hash === '#someday') drawSomeday(); }
+  function render(){ drawSummary(); drawChips(); draw(); if (location.hash === '#projects') drawProjects(); if (location.hash === '#someday') drawSomeday(); if (location.hash === '#next') drawNext(); }
   route();
 })();
 </script>

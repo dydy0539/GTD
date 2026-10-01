@@ -854,3 +854,27 @@ class ArchiveCategoryTest(unittest.TestCase):
             cli.main(["--home", tmp, "render", "--page", str(page)])
             data = _json.loads(_re.search(r'id="data">(.*?)</script>', page.read_text(), _re.S).group(1))
             self.assertEqual(data["items"][0]["category"], "Fitness")
+
+
+class NextActionTest(unittest.TestCase):
+    def test_next_actions_and_done(self):
+        import json as _json, re as _re
+        from gtd import cli
+        from gtd.decide import apply
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            a, _ = store.add(adapters.from_text("read MU earnings", via="telegram"))
+            apply(store, {a.id: {"decision": "next", "project": "Research: Micron"},
+                          "_adds": [{"text": "Call the bank about the card", "status": "next"}]})
+            nxt = {i.title: i for i in store.items(status="next")}
+            self.assertEqual(set(nxt), {"read MU earnings", "Call the bank about the card"})
+            self.assertIn("project:research:-micron", nxt["read MU earnings"].tags)
+            page = Path(tmp) / "page.html"
+            cli.main(["--home", tmp, "render", "--page", str(page)])
+            data = _json.loads(_re.search(r'id="data">(.*?)</script>', page.read_text(), _re.S).group(1))
+            self.assertEqual({r["status"] for r in data["items"]}, {"next"})
+            apply(store, {a.id: "done"})
+            self.assertEqual(store.get(a.id).status, "done")
+            cli.main(["--home", tmp, "render", "--page", str(page)])          # done items leave the page
+            data = _json.loads(_re.search(r'id="data">(.*?)</script>', page.read_text(), _re.S).group(1))
+            self.assertEqual([r["title"] for r in data["items"]], ["Call the bank about the card"])

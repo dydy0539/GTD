@@ -14,6 +14,8 @@ DECISIONS = {
     "later": "Review later",
     "reference": "Archive (reference)",
     "someday": "Someday / maybe",
+    "next": "Next action",
+    "done": "Done",
     "inbox": "Back to in-tray",
 }
 
