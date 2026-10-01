@@ -2,9 +2,18 @@
 # Wait (at most 25 min, to stay under background time limits) for the next
 # :15 / :45 UTC check; then report whether a capture run added new items.
 #   scripts/wait-for-capture.sh [DATA_DIR]
-#   → "NEW <n>" (new items captured), "UNCHANGED" (nothing new), or "WAIT" (check not reached yet)
+#   → "NEW <n>" (new items captured), "UNCHANGED" (nothing new), or "WAIT" (check not reached yet,
+#     or quiet hours 00:00–08:00 local)
 DATA=${1:-/home/user/gtd-inbox}
 base=$(git -C "$DATA" rev-parse HEAD)
+# Quiet hours: no checks between 00:00 and 08:00 where you are (state/here.json, default Singapore).
+# Overnight captures are still reported at the first check after 08:00.
+zone=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("timezone","Asia/Singapore"))' "$DATA/state/here.json" 2>/dev/null || echo Asia/Singapore)
+lh=$(TZ="$zone" date +%-H); lm=$(TZ="$zone" date +%-M); ls=$(TZ="$zone" date +%-S)
+if [ "$lh" -lt 8 ]; then
+  until8=$(( (8-lh)*3600 - lm*60 - ls ))
+  sleep $(( until8 < 1500 ? until8 : 1500 )); echo WAIT; exit 0
+fi
 m=$(date -u +%-M); s=$(date -u +%-S)
 if [ "$m" -lt 15 ]; then w=$(( (15-m)*60 - s )); elif [ "$m" -lt 45 ]; then w=$(( (45-m)*60 - s )); else w=$(( (75-m)*60 - s )); fi
 if [ "$w" -gt 1500 ]; then sleep 1500; echo WAIT; exit 0; fi
