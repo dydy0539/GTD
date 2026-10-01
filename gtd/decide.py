@@ -24,7 +24,8 @@ def project_tag(name: str) -> str:
 
 def apply(store: Store, decisions) -> list[str]:
     """`decisions`: {id: "trash"} / {id: {"decision": "trash", "at": ...}} or a list of
-    {"id": ..., "decision": ..., "project": ..., "note": ..., "calendar": {...}}; a project adds a
+    {"id": ..., "decision": ..., "project": ..., "category": ..., "note": ..., "calendar": {...}};
+    a category files an archived item (extra.category; "" clears it), a project adds a
     "project:<name>" tag, a note is appended, a calendar dict ({start, location, summary})
     changes the item's appointment. Unknown ids and values are reported, not fatal."""
     report = []
@@ -56,6 +57,12 @@ def apply(store: Store, decisions) -> list[str]:
         if d.get("project") and project_tag(d["project"]) not in item.tags:
             item.tags = [*item.tags, project_tag(d["project"])]
             extra["project"] = d["project"]
+        if "category" in d and d["category"] != item.extra.get("category", ""):
+            if d["category"]:
+                item.extra["category"] = d["category"]
+            else:
+                item.extra.pop("category", None)
+            extra["category"] = d["category"]
         if d.get("note") and d["note"] not in item.note:
             item.note = f"{item.note}\n{d['note']}".strip()
             extra["note"] = d["note"]

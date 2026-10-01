@@ -831,3 +831,26 @@ class SomedayTest(unittest.TestCase):
             self.assertIn("In-tray page", {r["source"] for r in data["items"]})
             cli.main(["--home", tmp, "decide", a.id, "inbox"])            # and back again
             self.assertEqual([i.title for i in store.items()], ["Learn to sail"])
+
+
+class ArchiveCategoryTest(unittest.TestCase):
+    def test_archive_into_categories(self):
+        import json as _json, re as _re
+        from gtd import cli
+        from gtd.decide import apply
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            a, _ = store.add(adapters.from_text("Morning routine for lower back pain", via="telegram"))
+            report = apply(store, {a.id: {"decision": "reference", "category": "Health & fitness"}})
+            self.assertEqual(len(report), 1)
+            item = store.get(a.id)
+            self.assertEqual((item.status, item.extra["category"]), ("reference", "Health & fitness"))
+            apply(store, {a.id: {"decision": "reference", "category": "Fitness"}})   # re-file while archived
+            self.assertEqual(store.get(a.id).extra["category"], "Fitness")
+            apply(store, {a.id: {"decision": "reference", "category": ""}})          # clear
+            self.assertNotIn("category", store.get(a.id).extra)
+            apply(store, {a.id: {"decision": "reference", "category": "Fitness"}})
+            page = Path(tmp) / "page.html"
+            cli.main(["--home", tmp, "render", "--page", str(page)])
+            data = _json.loads(_re.search(r'id="data">(.*?)</script>', page.read_text(), _re.S).group(1))
+            self.assertEqual(data["items"][0]["category"], "Fitness")

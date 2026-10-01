@@ -35,7 +35,7 @@ def _record(i: Item) -> dict:
     if snippet.lower().startswith(i.title.lower()[:40]):  # preview that only repeats the title
         snippet = snippet[len(i.title):].strip(" .·-—:") if len(snippet) > len(i.title) + 20 else ""
     return {
-        "id": i.id, "status": i.status, "title": title, "icon": i.icon, "channel": i.channel,
+        "id": i.id, "status": i.status, "category": i.extra.get("category", ""), "title": title, "icon": i.icon, "channel": i.channel,
         "via": i.via, "source": SOURCES.get(i.via, i.via),
         "url": src.get("url") or src.get("link") or "",
         "at": i.captured_at.isoformat(), "who": who[:80],
@@ -261,7 +261,10 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   const ACTIONS = {trash:'🗑 Trash', later:'⏳ Review later', someday:'💭 Someday', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
   const DONE = {trash:'Moved to Trash', later:'Saved for review later', someday:'Moved to Someday / maybe', reference:'Archived for reference', inbox:'Back in the in-tray'};
   const decided = {}, edits = {};
-  let editing = '', picking = '';
+  let editing = '', picking = '', filing = '';
+  const categories = new Set();  // archive categories: from the page's database + those already used
+  const catOf = it => (decided[it.id] && decided[it.id].category) || it.category || '';
+  const allCategories = () => [...new Set([...categories, ...all.map(catOf).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
   const statusOf = it => (decided[it.id] && decided[it.id].decision) || it.status;
   // Appointment changes from the Edit form live in edits/<item id> = {start, end, location, summary, at}
   const pad = n => String(n).padStart(2, '0');
@@ -369,7 +372,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     }
     if (!quiet) {
       const prev = before ? before.decision : it.status;
-      say(extra && extra.project ? `Filed under ${extra.project}: ${it.title}` : `${DONE[decision]}: ${it.title}`,
+      say(extra && extra.project ? `Filed under ${extra.project}: ${it.title}`
+          : extra && extra.category ? `Archived in ${extra.category}: ${it.title}` : `${DONE[decision]}: ${it.title}`,
           () => decide(it, prev, true));
     }
   }
@@ -393,9 +397,11 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       catch (err) { if (before) edits[it.id] = before; else delete edits[it.id]; render(); say('Couldn’t save that. Try again.'); }
       return;
     }
+    const tc = e.target.closest('.to-cat');
+    if (tc) { filing = filing === tc.dataset.id ? '' : tc.dataset.id; picking = ''; render(); return; }
     const tp = e.target.closest('.to-proj');
     if (tp) { picking = picking === tp.dataset.id ? '' : tp.dataset.id; render(); return; }
-    if (e.target.closest('.pick-cancel')) { picking = ''; render(); return; }
+    if (e.target.closest('.pick-cancel')) { picking = ''; filing = ''; render(); return; }
     const b = e.target.closest('.act'); if (!b || !b.dataset.d) return;
     const it = all.find(x => x.id === b.dataset.id); if (it) decide(it, b.dataset.d);
   });
@@ -406,6 +412,9 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       snap.docs.forEach(d => { const v = d.data(); if (v && ACTIONS[v.decision]) decided[d.id] = v; });
       render();
     }, () => { db = null; render(); });
+    db.collection('categories').onSnapshot(snap => {
+      categories.clear(); snap.docs.forEach(d => { const v = d.data(); if (v && v.name) categories.add(v.name); }); render();
+    }, () => {});
     db.collection('adds').onSnapshot(snap => {
       for (let i = all.length - 1; i >= 0; i--) if (all[i].pending) all.splice(i, 1);
       snap.docs.forEach(d => { const v = d.data(); if (v && v.text) all.unshift({id: 'add:' + d.id, status: v.status || 'someday', pending: true,
@@ -426,6 +435,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const meta = [it.who, it.source].filter(Boolean).map(esc).join(' · ');
     const tags = [...(it.priority === 'high' ? ['<span class="tag p-high">high</span>'] : []),
                   ...(it.priority === 'low' ? ['<span class="tag">low</span>'] : []),
+                  ...(catOf(it) && statusOf(it) === 'reference' ? [`<span class="tag">🗄 ${esc(catOf(it))}</span>`] : []),
                   ...it.tags.map(t => `<span class="tag">${esc(t)}</span>`)].join('');
     let cal = '';
     const c = calOf(it);
@@ -445,7 +455,11 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     }
     const st = statusOf(it);
     const acts = it.pending ? '<div class="acts"><span class="ro">Saved — syncs at the next refresh</span></div>' : db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox'))
-      .map(d => `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}${st !== 'trash' ? `<button class="act to-proj" data-id="${esc(it.id)}">📁 Project</button>` : ''}</div>` +
+      .map(d => d === 'reference' ? `<button class="act reference to-cat" data-id="${esc(it.id)}">${ACTIONS[d]} ▾</button>`
+                                  : `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}${st === 'reference' ? `<button class="act to-cat" data-id="${esc(it.id)}">🏷 Category ▾</button>` : ''}${st !== 'trash' ? `<button class="act to-proj" data-id="${esc(it.id)}">📁 Project</button>` : ''}</div>` +
+      (filing === it.id ? `<div class="pick"><select data-id="${esc(it.id)}" class="cat-pick"><option value="">Archive under…</option>
+        ${allCategories().map(c => `<option value="${esc(c)}"${c === catOf(it) ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+        <option value="__none">No category</option><option value="__new">➕ New category…</option></select><button class="act pick-cancel">Cancel</button></div>` : '') +
       (picking === it.id ? `<div class="pick"><select data-id="${esc(it.id)}" class="proj-pick"><option value="">File under project…</option>
         ${activeProjects().map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
         <option value="__new">➕ New project from this…</option></select><button class="act pick-cancel">Cancel</button></div>` : '') : '';
@@ -470,7 +484,10 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const addbox = '';
     if (!shown.length) { out.innerHTML = addbox + `<div class="empty">${items.length ? 'Nothing matches this search or filter.' : EMPTY[view]}</div>`; return; }
     let groups;
-    if (group === 'kind') groups = KINDS.map(([k, label]) => [label, shown.filter(it => kindOf(it) === k)]);
+    if (view === 'reference') {
+      const cats = [...new Set(shown.map(it => catOf(it) || 'No category'))].sort((a, b) => a === 'No category' ? 1 : b === 'No category' ? -1 : a.localeCompare(b));
+      groups = cats.map(c => ['🗄 ' + c, shown.filter(it => (catOf(it) || 'No category') === c)]);
+    } else if (group === 'kind') groups = KINDS.map(([k, label]) => [label, shown.filter(it => kindOf(it) === k)]);
     else if (group === 'source') groups = Object.keys(counts).map(s => [s, shown.filter(it => it.source === s)]);
     else {
       const byDay = new Map();
@@ -702,7 +719,20 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   onLists('keydown', e => { if (e.target.id === 'someday-new' && e.key === 'Enter') addSomeday(); });
   onLists('click', e => { if (e.target.closest('#someday-add')) addSomeday(); });
   // In-tray row → project
-  onLists('change', e => {
+  onLists('change', async e => {
+    const cs = e.target.closest('.cat-pick');
+    if (cs && cs.value) {
+      const it = all.find(x => x.id === cs.dataset.id); filing = '';
+      let cat = cs.value === '__none' ? '' : cs.value;
+      if (cs.value === '__new') {
+        cat = (prompt('New archive category (e.g. Investing, Health & fitness):') || '').trim();
+        if (!cat) { render(); return; }
+        categories.add(cat);
+        try { await db.doc('categories/' + cat.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')).set({name: cat}); } catch (err) {}
+      }
+      decide(it, 'reference', false, {category: cat});
+      return;
+    }
     const sel = e.target.closest('.proj-pick'); if (!sel || !sel.value) return;
     const it = all.find(x => x.id === sel.dataset.id); picking = '';
     if (sel.value === '__new') { pform = {kind: 'oneoff', name: it.title.slice(0, 80)}; fileAfterCreate = it.id; location.hash = 'projects'; return; }
