@@ -261,7 +261,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   const ACTIONS = {trash:'🗑 Trash', later:'⏳ Review later', someday:'💭 Someday', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
   const DONE = {trash:'Moved to Trash', later:'Saved for review later', someday:'Moved to Someday / maybe', reference:'Archived for reference', inbox:'Back in the in-tray'};
   const decided = {}, edits = {};
-  let editing = '', picking = '', filing = '';
+  let editing = '', picking = '', filing = '', newCatFor = '';
   const categories = new Set();  // archive categories: from the page's database + those already used
   const catOf = it => (decided[it.id] && decided[it.id].category) || it.category || '';
   const allCategories = () => [...new Set([...categories, ...all.map(catOf).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
@@ -401,7 +401,9 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     if (tc) { filing = filing === tc.dataset.id ? '' : tc.dataset.id; picking = ''; render(); return; }
     const tp = e.target.closest('.to-proj');
     if (tp) { picking = picking === tp.dataset.id ? '' : tp.dataset.id; render(); return; }
-    if (e.target.closest('.pick-cancel')) { picking = ''; filing = ''; render(); return; }
+    if (e.target.closest('.pick-cancel')) { picking = ''; filing = ''; newCatFor = ''; render(); return; }
+    const ns = e.target.closest('.cat-new-save');
+    if (ns) { saveNewCategory(ns.dataset.id); return; }
     const b = e.target.closest('.act'); if (!b || !b.dataset.d) return;
     const it = all.find(x => x.id === b.dataset.id); if (it) decide(it, b.dataset.d);
   });
@@ -460,6 +462,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       (filing === it.id ? `<div class="pick"><select data-id="${esc(it.id)}" class="cat-pick"><option value="">Archive under…</option>
         ${allCategories().map(c => `<option value="${esc(c)}"${c === catOf(it) ? ' selected' : ''}>${esc(c)}</option>`).join('')}
         <option value="__none">No category</option><option value="__new">➕ New category…</option></select><button class="act pick-cancel">Cancel</button></div>` : '') +
+      (newCatFor === it.id ? `<div class="pick"><input class="cat-new" data-id="${esc(it.id)}" placeholder="New category name" aria-label="New category name" style="flex:1;min-width:0;font:15px var(--sans);padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)">
+        <button class="act cat-new-save" data-id="${esc(it.id)}">Save</button><button class="act pick-cancel">Cancel</button></div>` : '') +
       (picking === it.id ? `<div class="pick"><select data-id="${esc(it.id)}" class="proj-pick"><option value="">File under project…</option>
         ${activeProjects().map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
         <option value="__new">➕ New project from this…</option></select><button class="act pick-cancel">Cancel</button></div>` : '') : '';
@@ -502,7 +506,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   //                  target: {amount, max, unit: 'min'|'sessions'|'books', period: 'week'|'month'}, created, updated}
   // logs/<auto>   = {project, amount, at, note}   (one document per session / book: no counters)
   const projects = {}, logs = {};
-  let pform = null, doneFor = '', fileAfterCreate = '';
+  let pform = null, doneFor = '', fileAfterCreate = '', otherFor = '', deleteArmed = false;
   const slug = name => 'project:' + String(name).toLowerCase().split(/\s+/).filter(Boolean).join('-');
   const activeProjects = () => Object.values(projects).filter(p => p.status !== 'done')
     .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'recurring' ? -1 : 1));
@@ -562,7 +566,9 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const daysLeft = Math.ceil((end - Date.now()) / 864e5);
     const per = t.period === 'month' ? 'this month' : 'this week';
     const quick = (QUICK[t.unit] || [1]).map(a => `<button class="chipbtn p-log" data-p="${esc(p.id)}" data-a="${a}">+${a}${t.unit === 'min' ? ' min' : ''}</button>`).join('')
-      + (t.unit === 'min' ? `<button class="chipbtn p-log" data-p="${esc(p.id)}" data-a="?">+ other</button>` : '');
+      + (t.unit === 'min' ? (otherFor === p.id
+          ? `<span class="logs"><input type="number" min="1" class="p-other" data-p="${esc(p.id)}" placeholder="min" aria-label="Minutes" style="width:80px;font:14px var(--sans);padding:4px 8px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)"><button class="chipbtn p-other-save" data-p="${esc(p.id)}">Log</button></span>`
+          : `<button class="chipbtn p-other-open" data-p="${esc(p.id)}">+ other</button>`) : '');
     const recent = mine.slice(0, 3).map(([id, l]) =>
       `${esc(new Date(l.at).toLocaleDateString(undefined, {weekday: 'short'}))} +${esc(l.amount)}${db ? ` <button class="p-unlog" data-l="${esc(id)}">undo</button>` : ''}`).join(' · ');
     return `<article class="card"><h3>${esc(p.name)}<span class="per">${esc(t.max ? `${t.amount}–${t.max}` : t.amount)} ${esc(unit[1])} / ${esc(t.period || 'week')}</span></h3>
@@ -604,7 +610,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       <label class="wide">Next action<input name="next" value="${esc((p.next || {}).text || '')}" placeholder="The very next physical step"></label>
       <label>When<input type="datetime-local" name="when" value="${esc(((p.next || {}).when || '').slice(0, 16))}"></label>
       <div class="btns"><button class="primary pf-save">${f.id ? 'Save' : 'Create project'}</button><button class="act pf-cancel">Cancel</button>
-        ${f.id ? `<button class="act trash pf-delete" style="margin-left:auto">Delete project</button>` : ''}</div></div>`;
+        ${f.id ? `<button class="act trash pf-delete" style="margin-left:auto">${deleteArmed ? 'Tap again to delete' : 'Delete project'}</button>` : ''}</div></div>`;
   }
 
   function drawProjects(){
@@ -647,7 +653,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     if (t.closest('.pf-cancel')) { pform = null; fileAfterCreate = ''; drawProjects(); return; }
     if (t.closest('.p-edit')) { pform = {id: pid, kind: projects[pid].kind}; drawProjects(); window.scrollTo({top: 0}); return; }
     if (t.closest('.pf-delete')) {
-      if (!confirm('Delete this project? Its logged sessions stay in the history.')) return;
+      if (!deleteArmed) { deleteArmed = true; drawProjects(); setTimeout(() => { if (deleteArmed) { deleteArmed = false; drawProjects(); } }, 4000); return; }
+      deleteArmed = false;
       const id = pform.id; delete projects[id]; pform = null; render();
       try { await db.doc('projects/' + id).delete(); } catch (err) { say('Couldn’t delete. Try again.'); }
       return;
@@ -682,12 +689,20 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       say(p.status === 'done' ? `Reopened ${p.name}` : `🏁 ${p.name} done`);
       return;
     }
-    const lg = t.closest('.p-log');
+    if (t.closest('.p-other-open')) {
+      otherFor = pid; drawProjects();
+      const box = document.querySelector(`.p-other[data-p="${CSS.escape(pid)}"]`); if (box) box.focus();
+      return;
+    }
+    const lg = t.closest('.p-log') || t.closest('.p-other-save');
     if (lg) {
       const p = projects[pid], unit = (p.target || {}).unit;
       let amount = lg.dataset.a;
-      if (amount === '?') { amount = prompt('How many minutes?'); if (!amount) return; }
-      amount = +amount; if (!(amount > 0)) return;
+      if (lg.classList.contains('p-other-save')) {
+        amount = (document.querySelector(`.p-other[data-p="${CSS.escape(pid)}"]`) || {}).value;
+        otherFor = '';
+      }
+      amount = +amount; if (!(amount > 0)) { drawProjects(); return; }
       const entry = {project: pid, amount, at: new Date().toISOString()};
       const ref = db.collection('logs').doc(); logs[ref.id] = entry; drawProjects();
       try { await ref.set(entry); say(`Logged ${amount} ${UNITS[unit] ? UNITS[unit][amount === 1 ? 0 : 1] : ''} · ${p.name}`, async () => {
@@ -718,19 +733,32 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   onLists('input', e => { if (e.target.id === 'someday-new') somedayDraft = e.target.value; });
   onLists('keydown', e => { if (e.target.id === 'someday-new' && e.key === 'Enter') addSomeday(); });
   onLists('click', e => { if (e.target.closest('#someday-add')) addSomeday(); });
+  async function saveNewCategory(id){
+    const box = document.querySelector(`.cat-new[data-id="${CSS.escape(id)}"]`);
+    const cat = (box && box.value || '').trim();
+    if (!cat) { if (box) box.focus(); return; }
+    const it = all.find(x => x.id === id); newCatFor = '';
+    categories.add(cat);
+    try { await db.doc('categories/' + (cat.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'c' + Date.now())).set({name: cat}); } catch (err) {}
+    decide(it, 'reference', false, {category: cat});
+  }
+  document.getElementById('pout').addEventListener('keydown', e => {
+    if (e.target.classList.contains('p-other') && e.key === 'Enter') {
+      const btn = document.querySelector(`.p-other-save[data-p="${CSS.escape(e.target.dataset.p)}"]`); if (btn) btn.click();
+    }
+  });
+  onLists('keydown', e => { if (e.target.classList.contains('cat-new') && e.key === 'Enter') saveNewCategory(e.target.dataset.id); });
   // In-tray row → project
   onLists('change', async e => {
     const cs = e.target.closest('.cat-pick');
     if (cs && cs.value) {
       const it = all.find(x => x.id === cs.dataset.id); filing = '';
-      let cat = cs.value === '__none' ? '' : cs.value;
-      if (cs.value === '__new') {
-        cat = (prompt('New archive category (e.g. Investing, Health & fitness):') || '').trim();
-        if (!cat) { render(); return; }
-        categories.add(cat);
-        try { await db.doc('categories/' + cat.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')).set({name: cat}); } catch (err) {}
+      if (cs.value === '__new') {  // a text box right under the item (pop-up prompts are blocked here)
+        newCatFor = it.id; render();
+        const box = document.querySelector(`.cat-new[data-id="${CSS.escape(it.id)}"]`); if (box) box.focus();
+        return;
       }
-      decide(it, 'reference', false, {category: cat});
+      decide(it, 'reference', false, {category: cs.value === '__none' ? '' : cs.value});
       return;
     }
     const sel = e.target.closest('.proj-pick'); if (!sel || !sel.value) return;
