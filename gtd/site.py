@@ -154,8 +154,9 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 .cal-form .wide{grid-column:1/-1}
 .cal-form .btns{grid-column:1/-1;display:flex;gap:8px}
 .cal-form .save{background:var(--cal);color:var(--surface);border-color:var(--cal)}
-#proj-view,#tray-view{display:grid;gap:18px}
-#proj-view[hidden],#tray-view[hidden]{display:none}
+#proj-view,#tray-view,#someday-view{display:grid;gap:18px}
+#proj-view[hidden],#tray-view[hidden],#someday-view[hidden]{display:none}
+.apps{flex-wrap:wrap}
 .apps{display:flex;gap:6px;padding-top:4px}
 .apps a{font:600 14px var(--sans);color:var(--muted);text-decoration:none;padding:7px 14px;border-radius:999px;
   border:1px solid var(--line);background:var(--surface)}
@@ -208,7 +209,14 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 @media (prefers-reduced-motion:no-preference){.it{transition:background .15s}.it:hover{background:var(--ground)}}
 </style>
 <div class="wrap">
-  <nav class="apps" aria-label="Pages"><a href="#tray" id="to-tray">📥 In-tray</a><a href="#projects" id="to-proj">🎯 Projects</a></nav>
+  <nav class="apps" aria-label="Pages"><a href="#tray" id="to-tray">📥 In-tray</a><a href="#projects" id="to-proj">🎯 Projects</a><a href="#someday" id="to-someday">💭 Someday / maybe</a></nav>
+  <div id="someday-view" hidden>
+    <header class="head">
+      <h1>Someday / maybe</h1>
+      <div class="sum" id="ssum"></div>
+    </header>
+    <main id="sout"></main>
+  </div>
   <div id="proj-view" hidden>
     <header class="head">
       <h1>Projects</h1>
@@ -248,7 +256,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   // Triage choices live in the page's database (decisions/<item id> = {decision, at});
   // `gtd decide` later writes them into the items themselves.
-  const VIEWS = [['inbox','In-tray'], ['later','Review later'], ['someday','Someday / maybe'], ['reference','Archive'], ['trash','Trash']];
+  const onLists = (ev, fn) => ['out', 'sout'].forEach(id => document.getElementById(id).addEventListener(ev, fn));
+  const VIEWS = [['inbox','In-tray'], ['later','Review later'], ['reference','Archive'], ['trash','Trash']];
   const ACTIONS = {trash:'🗑 Trash', later:'⏳ Review later', someday:'💭 Someday', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
   const DONE = {trash:'Moved to Trash', later:'Saved for review later', someday:'Moved to Someday / maybe', reference:'Archived for reference', inbox:'Back in the in-tray'};
   const decided = {}, edits = {};
@@ -364,11 +373,11 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
           () => decide(it, prev, true));
     }
   }
-  document.getElementById('out').addEventListener('click', async e => {
+  onLists('click', async e => {
     if (!db) return;
     const ed = e.target.closest('.cal-edit');
-    if (ed) { editing = editing === ed.dataset.id ? '' : ed.dataset.id; draw(); return; }
-    if (e.target.closest('.cal-cancel')) { editing = ''; draw(); return; }
+    if (ed) { editing = editing === ed.dataset.id ? '' : ed.dataset.id; render(); return; }
+    if (e.target.closest('.cal-cancel')) { editing = ''; render(); return; }
     const sv = e.target.closest('.cal-save');
     if (sv) {
       const form = sv.closest('.cal-form'), it = all.find(x => x.id === sv.dataset.id), c = calOf(it);
@@ -385,8 +394,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       return;
     }
     const tp = e.target.closest('.to-proj');
-    if (tp) { picking = picking === tp.dataset.id ? '' : tp.dataset.id; draw(); return; }
-    if (e.target.closest('.pick-cancel')) { picking = ''; draw(); return; }
+    if (tp) { picking = picking === tp.dataset.id ? '' : tp.dataset.id; render(); return; }
+    if (e.target.closest('.pick-cancel')) { picking = ''; render(); return; }
     const b = e.target.closest('.act'); if (!b || !b.dataset.d) return;
     const it = all.find(x => x.id === b.dataset.id); if (it) decide(it, b.dataset.d);
   });
@@ -458,7 +467,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const shown = items.filter(it => (!source || it.source === source) &&
       (!q || [it.title, it.who, it.note, it.snippet, it.tags.join(' '), it.source].join(' ').toLowerCase().includes(q)));
     const out = document.getElementById('out');
-    const addbox = view === 'someday' && db ? `<div class="addbox"><input id="someday-new" placeholder="Something you might want to do one day…" aria-label="New someday / maybe idea" value="${esc(somedayDraft)}"><button class="primary" id="someday-add">Add</button></div>` : '';
+    const addbox = '';
     if (!shown.length) { out.innerHTML = addbox + `<div class="empty">${items.length ? 'Nothing matches this search or filter.' : EMPTY[view]}</div>`; return; }
     let groups;
     if (group === 'kind') groups = KINDS.map(([k, label]) => [label, shown.filter(it => kindOf(it) === k)]);
@@ -687,13 +696,13 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     if (!text || !db) return;
     somedayDraft = '';
     try { await db.collection('adds').doc().set({text, status: 'someday', at: new Date().toISOString()}); say('Added to Someday / maybe: ' + text); }
-    catch (e) { somedayDraft = text; draw(); say('Couldn’t save that. Try again.'); }
+    catch (e) { somedayDraft = text; render(); say('Couldn’t save that. Try again.'); }
   }
-  document.getElementById('out').addEventListener('input', e => { if (e.target.id === 'someday-new') somedayDraft = e.target.value; });
-  document.getElementById('out').addEventListener('keydown', e => { if (e.target.id === 'someday-new' && e.key === 'Enter') addSomeday(); });
-  document.getElementById('out').addEventListener('click', e => { if (e.target.closest('#someday-add')) addSomeday(); });
+  onLists('input', e => { if (e.target.id === 'someday-new') somedayDraft = e.target.value; });
+  onLists('keydown', e => { if (e.target.id === 'someday-new' && e.key === 'Enter') addSomeday(); });
+  onLists('click', e => { if (e.target.closest('#someday-add')) addSomeday(); });
   // In-tray row → project
-  document.getElementById('out').addEventListener('change', e => {
+  onLists('change', e => {
     const sel = e.target.closest('.proj-pick'); if (!sel || !sel.value) return;
     const it = all.find(x => x.id === sel.dataset.id); picking = '';
     if (sel.value === '__new') { pform = {kind: 'oneoff', name: it.title.slice(0, 80)}; fileAfterCreate = it.id; location.hash = 'projects'; return; }
@@ -714,17 +723,28 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     }, () => {});
   }
 
+  function drawSomeday(){
+    const items = all.filter(it => statusOf(it) === 'someday');
+    document.getElementById('ssum').innerHTML = `<span><b>${items.length}</b> idea${items.length === 1 ? '' : 's'}</span>` +
+      '<span>Things you might do one day, but not now. Look through it weekly.</span>';
+    const addbox = db ? `<div class="addbox"><input id="someday-new" placeholder="Something you might want to do one day…" aria-label="New someday / maybe idea" value="${esc(somedayDraft)}"><button class="primary" id="someday-add">Add</button></div>` : '';
+    const groups = KINDS.map(([k, label]) => [label, items.filter(it => kindOf(it) === k)]).filter(g => g[1].length);
+    document.getElementById('sout').innerHTML = addbox + (items.length
+      ? groups.map(([label, list]) => `<section><h2>${esc(label)} <span class="n">${list.length}</span></h2><div class="list">${list.map(row).join('')}</div></section>`).join('')
+      : `<div class="empty">${EMPTY.someday}</div>`);
+  }
+
   function route(){
-    const proj = location.hash === '#projects';
-    document.getElementById('proj-view').hidden = !proj;
-    document.getElementById('tray-view').hidden = proj;
-    document.getElementById('to-proj').setAttribute('aria-current', proj ? 'page' : 'false');
-    document.getElementById('to-tray').setAttribute('aria-current', proj ? 'false' : 'page');
+    const page = location.hash === '#projects' ? 'proj' : location.hash === '#someday' ? 'someday' : 'tray';
+    for (const [v, nav] of [['proj', 'to-proj'], ['someday', 'to-someday'], ['tray', 'to-tray']]) {
+      document.getElementById(v + '-view').hidden = page !== v;
+      document.getElementById(nav).setAttribute('aria-current', page === v ? 'page' : 'false');
+    }
     render();
   }
   window.addEventListener('hashchange', route);
 
-  function render(){ drawSummary(); drawChips(); draw(); if (location.hash === '#projects') drawProjects(); }
+  function render(){ drawSummary(); drawChips(); draw(); if (location.hash === '#projects') drawProjects(); if (location.hash === '#someday') drawSomeday(); }
   route();
 })();
 </script>
