@@ -47,10 +47,15 @@ def _record(i: Item) -> dict:
     }
 
 
-def page(items: list[Item], here: str = "") -> str:
-    data = json.dumps({"generated": now().isoformat(), "here": here, "items": [_record(i) for i in items]},
+def data(items: list[Item], here: str = "") -> dict:
+    return {"generated": now().isoformat(), "here": here, "items": [_record(i) for i in items]}
+
+
+def page(items: list[Item], here: str = "", drive: dict | None = None) -> str:
+    """`drive` ({"page", "outbox"}) lets the page load fresh data and send taps through Google Drive."""
+    body = json.dumps({**data(items, here), **({"drive": drive} if drive else {})},
                       ensure_ascii=False).replace("</", "<\\/")
-    return TEMPLATE.replace("__DATA__", data)
+    return TEMPLATE.replace("__DATA__", body)
 
 
 def document(items: list[Item]) -> str:
@@ -270,9 +275,9 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 <script type="application/json" id="data">__DATA__</script>
 <script>
 (async function(){
-  const D = JSON.parse(document.getElementById('data').textContent);
+  let D = JSON.parse(document.getElementById('data').textContent);  // replaced by fresh data from Drive when it loads
   const all = D.items;
-  const NOW = Date.now();
+  let NOW = Date.now();
   const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}},
                  set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
   let group = store.get('gtd.group') || 'kind', source = '', q = '', view = 'inbox';
@@ -332,10 +337,15 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     db.doc('settings/here').set({timezone: phoneTz, at: new Date().toISOString()}).catch(() => {});
   }
   const hereLabel = z => (z || '').split('/').pop().replace(/_/g, ' ');
-  document.getElementById('gen').textContent =
-    'Updated ' + new Date(D.generated).toLocaleString(undefined, {weekday:'short', hour:'2-digit', minute:'2-digit'}) +
-    (D.here ? ' · times in ' + hereLabel(D.here) + (phoneTz && phoneTz !== D.here ? ' → ' + hereLabel(phoneTz) + ' from next refresh' : '') : '') +
-    (db ? '' : ' · read-only here: open it on claude.ai to sort items');
+  let live = '';  // how fresh the data is: '' (as published), 'live', 'loading', or an error note
+  function drawGen(){
+    document.getElementById('gen').textContent =
+      'Updated ' + new Date(D.generated).toLocaleString(undefined, {weekday:'short', hour:'2-digit', minute:'2-digit'}) +
+      (D.here ? ' · times in ' + hereLabel(D.here) + (phoneTz && phoneTz !== D.here ? ' → ' + hereLabel(phoneTz) + ' from next refresh' : '') : '') +
+      (live === 'loading' ? ' · checking for newer…' : live && live !== 'live' ? ' · ' + live : '') +
+      (db ? '' : ' · read-only here: open it on claude.ai to sort items');
+  }
+  drawGen();
 
   function drawSummary(){
     const items = all.filter(it => statusOf(it) === 'inbox');
@@ -448,13 +458,16 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     db.collection('categories').onSnapshot(snap => {
       categories.clear(); snap.docs.forEach(d => { const v = d.data(); if (v && v.name) categories.add(v.name); }); render();
     }, () => {});
-    db.collection('adds').onSnapshot(snap => {
+    db.collection('adds').onSnapshot(snap => { addDocs = snap.docs.map(d => [d.id, d.data()]); injectAdds(); render(); }, () => {});
+  }
+  let addDocs = [];
+  function injectAdds(){
       for (let i = all.length - 1; i >= 0; i--) if (all[i].pending) all.splice(i, 1);
-      snap.docs.forEach(d => { const v = d.data(); if (v && v.text) all.unshift({id: 'add:' + d.id, status: v.status || 'someday', pending: true,
+      addDocs.forEach(([id, v]) => { if (v && v.text) all.unshift({id: 'add:' + id, status: v.status || 'someday', pending: true,
         title: v.text, icon: v.status === 'next' ? '✅' : v.status === 'waiting' ? '🕓' : '💭', waiting_on: v.waiting_on || '', waiting_since: v.at || '', channel: 'text', via: 'page', source: 'In-tray page', url: '', at: v.at || new Date().toISOString(),
         who: '', note: '', snippet: '', tags: [], priority: '', calendar: null}); });
-      render();
-    }, () => {});
+  }
+  if (db) {
     db.collection('edits').onSnapshot(snap => {
       for (const k of Object.keys(edits)) delete edits[k];
       snap.docs.forEach(d => { const v = d.data(); if (v && v.start) edits[d.id] = v; });
@@ -904,6 +917,91 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     if (e.target.id === 'wait-new') waitDraft.text = e.target.value; if (e.target.id === 'wait-who') waitDraft.who = e.target.value; });
   document.getElementById('wout').addEventListener('keydown', e => { if ((e.target.id === 'wait-new' || e.target.id === 'wait-who') && e.key === 'Enter') addWaiting(); });
   document.getElementById('wout').addEventListener('click', e => { if (e.target.closest('#wait-add')) addWaiting(); });
+
+
+  // ---- Live through Google Drive: no Claude session needed ----
+  // The scheduled job writes the page data to a Drive file; the page reads it on open (and when you
+  // come back to it), and sends what you tapped as a snapshot file in the Drive outbox folder.
+  // Once the job has applied a tap, the page clears it from its database and trashes old snapshots.
+  const DRIVE = D.drive || null;
+  let mcp = null;
+  if (DRIVE) { try { mcp = await window.claude.use('mcp'); } catch (e) { mcp = null; } }
+  const GD = 'Google Drive';
+  const raw = {decisions: null, edits: null, adds: null, settings: null, projects: null, logs: null};
+  const b64text = b => new TextDecoder().decode(Uint8Array.from(atob(b), c => c.charCodeAt(0)));
+  const sha = async t => {
+    if (!(window.crypto && crypto.subtle)) { let h = 5381; for (let i = 0; i < t.length; i++) h = (h * 33 ^ t.charCodeAt(i)) >>> 0; return 'x' + h; }
+    return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map(x => x.toString(16).padStart(2, '0')).join('');
+  };
+  const trashing = new Set();
+  let lastLoad = 0, loading = false;
+  async function loadLive(){
+    if (!mcp || loading) return;
+    loading = true; live = 'loading'; drawGen();
+    try {
+      const r = await mcp.callTool(GD, 'download_file_content', {fileId: DRIVE.page}, {cache: false});
+      const p = r.payload || JSON.parse(r.content[0].text);
+      const fresh = JSON.parse(b64text(p.content));
+      lastLoad = Date.now();
+      if (fresh.items && Date.parse(fresh.generated) >= Date.parse(D.generated)) {
+        D = {...fresh, drive: DRIVE};
+        all.splice(0, all.length, ...fresh.items);
+        NOW = Date.now(); injectAdds();
+      }
+      live = fresh.items ? 'live' : '';  // '' until the job has written its first data (setup not finished)
+      if (live) tidy();
+    } catch (e) {
+      live = e && (e.code === 'not_granted' || e.code === 'approval_required') ? 'allow Google Drive to see the newest items'
+           : e && e.code === 'server_not_connected' ? 'connect Google Drive in claude.ai to see the newest items'
+           : 'showing the last saved copy';
+    }
+    loading = false; drawGen(); render(); sendOutbox();
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Date.now() - lastLoad > 120000) loadLive();
+  });
+  // what the job applied (and the snapshot files it read) — clear them so they're not sent again
+  async function tidy(){
+    if (!db || !raw.decisions || !raw.edits || !raw.adds) return;
+    const done = new Set(D.applied || []);
+    const gone = [
+      ...Object.entries(raw.decisions).filter(([id, v]) => done.has(`decisions/${id}@${v.at || ''}`)).map(([id]) => 'decisions/' + id),
+      ...Object.entries(raw.edits).filter(([id, v]) => done.has(`edits/${id}@${v.at || ''}`)).map(([id]) => 'edits/' + id),
+      ...Object.keys(raw.adds).filter(id => done.has('adds/' + id)).map(id => 'adds/' + id)];
+    for (const path of gone) { try { await db.doc(path).delete(); } catch (e) {} }
+    let trashed = [];
+    try { trashed = JSON.parse(store.get('gtd.trashed') || '[]'); } catch (e) {}
+    const todo = (D.outbox_done || []).filter(id => !trashed.includes(id) && !trashing.has(id));
+    todo.forEach(id => trashing.add(id));
+    for (const id of todo) {
+      try { await mcp.callTool(GD, 'trash_file', {fileId: id}); } catch (e) {}
+      try { trashed = JSON.parse(store.get('gtd.trashed') || '[]'); } catch (e) {}
+      store.set('gtd.trashed', JSON.stringify([...trashed, id].slice(-200)));
+    }
+  }
+  let outboxTimer = 0;
+  function sendOutbox(){ clearTimeout(outboxTimer); outboxTimer = setTimeout(writeOutbox, 3000); }
+  const sorted = o => Object.fromEntries(Object.keys(o).sort().map(k => [k, o[k]]));
+  async function writeOutbox(){
+    if (!mcp || !db || live !== 'live' || Object.values(raw).some(v => v === null)) return;  // everything loaded first
+    const body = JSON.stringify({decisions: sorted(raw.decisions), edits: sorted(raw.edits), adds: sorted(raw.adds),
+      here: raw.settings.here || null, projects: sorted(raw.projects), logs: sorted(raw.logs)});
+    const h = await sha(body);
+    if (h === D.outbox_sha || h === store.get('gtd.outbox')) return;  // the job already has exactly this
+    try {
+      await mcp.callTool(GD, 'create_file', {title: 'taps-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json',
+        parentId: DRIVE.outbox, contentMimeType: 'application/json', disableConversionToGoogleType: true, textContent: body});
+      store.set('gtd.outbox', h);
+    } catch (e) {}
+  }
+  if (db && DRIVE) {
+    const keep = name => snap => {
+      const m = {}; snap.docs.forEach(d => { m[d.id] = d.data(); });
+      raw[name] = m; if (name !== 'settings') tidy(); sendOutbox();
+    };
+    for (const name of Object.keys(raw)) db.collection(name).onSnapshot(keep(name), () => {});
+  }
+  loadLive();
 
   function route(){
     const page = location.hash === '#projects' ? 'proj' : location.hash === '#someday' ? 'someday' : location.hash === '#next' ? 'next' : location.hash === '#waiting' ? 'wait' : 'tray';

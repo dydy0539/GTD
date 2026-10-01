@@ -66,7 +66,8 @@ def cmd_render(store: Store, a: argparse.Namespace) -> int:
         kept = [i for i in store.items(status=None) if i.status in site.SHOWN]
         from .here import current, get
         here = current(store) if get(store) else ""  # only once a signal says where you are
-        Path(a.page).write_text(site.page(kept, here=here), encoding="utf-8")
+        from .drive import config
+        Path(a.page).write_text(site.page(kept, here=here, drive=config(store)), encoding="utf-8")
     print(f"Wrote {out / 'INBOX.md'} and {out / 'inbox.html'} ({len(items)} items)")
     return 0
 
@@ -113,19 +114,10 @@ def cmd_projects_save(store: Store, a: argparse.Namespace) -> int:
     """Back up the Projects page (projects + logged sessions) into the data repo."""
     import json
 
-    data = json.loads(Path(a.file).read_text(encoding="utf-8"))
-    projects = data.get("projects") or {}
-    logs = data.get("logs") or {}
-    path = store.home / "projects.json"
-    old = json.loads(path.read_text()) if path.exists() else {"projects": {}, "logs": {}}
-    merged = {"projects": {**old.get("projects", {}), **projects}, "logs": {**old.get("logs", {}), **logs}}
-    for pid in data.get("deleted") or []:
-        merged["projects"].pop(pid, None)
-    text = json.dumps(merged, ensure_ascii=False, indent=1, sort_keys=True) + "\n"
-    if not path.exists() or path.read_text() != text:
-        path.write_text(text, encoding="utf-8")
-        store.log("projects", "-", projects=len(merged["projects"]), logs=len(merged["logs"]))
-    print(f"{len(merged['projects'])} project(s), {len(merged['logs'])} logged session(s) in {path.name}")
+    from .drive import save_projects
+
+    for line in save_projects(store, json.loads(Path(a.file).read_text(encoding="utf-8"))):
+        print(line)
     return 0
 
 
@@ -192,7 +184,13 @@ def cmd_run(store: Store, a: argparse.Namespace) -> int:
     Each funnel runs only when it is configured; one failing funnel doesn't stop
     the others, and whatever was captured is always synced. Exit code 1 if any step failed.
     """
+    from . import drive as gdrive
+
     steps = []
+    cfg = gdrive.config(store)
+    drv = gdrive.Drive.from_env() if cfg else None
+    if drv:  # taps from the In-tray page first, so the page data written below includes them
+        steps.append(("Page taps (Drive)", lambda s_, _: print("\n".join(gdrive.pull(s_, drv, cfg))), None))
     if os.environ.get("GMAIL_APP_PASSWORD"):
         steps.append(("Gmail", cmd_gmail_sync, argparse.Namespace(dry_run=False, since_days=2)))
     if os.environ.get("TELEGRAM_BOT_TOKEN"):
@@ -200,6 +198,11 @@ def cmd_run(store: Store, a: argparse.Namespace) -> int:
     if (store.home / "feeds.yaml").exists():
         steps.append(("Feeds", cmd_feeds_sync, argparse.Namespace(dry_run=False)))
     steps.append(("Enrich", cmd_enrich, a))
+    if os.environ.get("TELEGRAM_BOT_TOKEN"):
+        steps.append(("Notify", lambda s_, _: print(notify_new(s_, before)), None))
+    if drv:
+        steps.append(("Page data (Drive)", lambda s_, _: print("\n".join(gdrive.push(s_, drv, cfg))), None))
+    before = {i.id for i in store.items(status=None)}  # everything before this run, to tell you what's new
     failed = []
     for name, fn, args in steps:
         print(f"── {name}")
@@ -215,6 +218,31 @@ def cmd_run(store: Store, a: argparse.Namespace) -> int:
     if failed:
         print(f"failed: {', '.join(failed)}", file=sys.stderr)
     return 1 if failed else 0
+
+
+def notify_new(store: Store, before: set[str]) -> str:
+    """Tell you on Telegram when new stuff reached the in-tray (silently at night)."""
+    import json
+
+    from .here import current
+    from .telegram import TelegramAPI, token_from_env
+
+    new = [i for i in store.items() if i.id not in before]  # new and still in the in-tray (not skipped by a rule)
+    if not new:
+        return "nothing new"
+    path = store.home / "state" / "telegram.json"
+    owners = (json.loads(path.read_text()) if path.exists() else {}).get("owner_ids") or []
+    if not owners:
+        return f"{len(new)} new, but no Telegram chat linked yet"
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    hour = datetime.now(ZoneInfo(current(store))).hour
+    lines = [f"📥 {len(new)} new in your In-tray"] + [f"• {i.title[:90]}" for i in new[:8]]
+    if len(new) > 8:
+        lines.append(f"…and {len(new) - 8} more")
+    TelegramAPI(token_from_env()).call("sendMessage", chat_id=owners[0], text="\n".join(lines),
+                                       disable_notification=hour < 8, disable_web_page_preview=True)
+    return f"told you about {len(new)} new item(s)"
 
 
 def cmd_init(store: Store, a: argparse.Namespace) -> int:

@@ -905,3 +905,99 @@ class WaitingForTest(unittest.TestCase):
             self.assertEqual(rec["Visa decision"]["waiting_on"], "ICA")
             apply(store, {a.id: "done"})                                                # received
             self.assertEqual(store.get(a.id).status, "done")
+
+
+class FakeDrive:
+    """Drive with an outbox folder and one page file, in memory."""
+
+    def __init__(self):
+        self.files = {}      # id → bytes
+        self.outbox = []     # ids, newest first
+        self.uploads = 0
+
+    def drop(self, fid, snapshot):
+        import json as _json
+        self.files[fid] = _json.dumps(snapshot).encode()
+        self.outbox.insert(0, fid)
+
+    def list_folder(self, folder_id):
+        return [{"id": f} for f in self.outbox]
+
+    def download(self, file_id):
+        return self.files[file_id]
+
+    def upload(self, file_id, data):
+        self.files[file_id] = data
+        self.uploads += 1
+
+
+class DriveBridgeTest(unittest.TestCase):
+    """The In-tray page talks to the scheduled job through Drive — no Claude session in between."""
+
+    def test_taps_applied_once_and_page_data_written(self):
+        import json as _json
+        from gtd import drive
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            a, _ = store.add(adapters.from_text("Old newsletter", via="telegram"))
+            b, _ = store.add(adapters.from_text("Read the GLM paper", via="telegram"))
+            cfg = {"page": "PAGE", "outbox": "OUT"}
+            (Path(tmp) / "drive.json").write_text(_json.dumps(cfg))
+            self.assertEqual(drive.config(store), cfg)
+            d = FakeDrive()
+            snap = {"decisions": {a.id: {"decision": "trash", "at": "t1"},
+                                  b.id: {"decision": "reference", "category": "AI", "at": "t1"}},
+                    "edits": {}, "adds": {"x1": {"text": "Book dentist", "status": "next", "at": "t1"}},
+                    "here": {"timezone": "Asia/Singapore", "at": "t1"},
+                    "projects": {"zone2": {"name": "Zone 2 cardio", "kind": "recurring"}}, "logs": {}}
+            d.drop("f1", snap)
+            drive.pull(store, d, cfg)
+            self.assertEqual(store.get(a.id).status, "trash")
+            self.assertEqual(store.get(b.id).extra["category"], "AI")
+            self.assertEqual([i.title for i in store.items(status="next")], ["Book dentist"])
+            self.assertIn("zone2", _json.loads((Path(tmp) / "projects.json").read_text())["projects"])
+            # the page hasn't cleared its taps yet and sends them again with one more: only the new one counts
+            snap["adds"]["x2"] = {"text": "Renew passport", "status": "next", "at": "t2"}
+            d.drop("f2", snap)
+            drive.pull(store, d, cfg)
+            self.assertEqual(sorted(i.title for i in store.items(status="next")), ["Book dentist", "Renew passport"])
+            drive.push(store, d, cfg)
+            page = _json.loads(d.files["PAGE"])
+            self.assertIn(f"decisions/{a.id}@t1", page["applied"])
+            self.assertIn("adds/x2", page["applied"])
+            self.assertEqual(page["outbox_done"], ["f2", "f1"])        # the page trashes these
+            self.assertEqual(page["drive"], cfg)
+            self.assertNotIn(a.id, [r["id"] for r in page["items"]])  # trashed items leave the page
+            drive.push(store, d, cfg)                                 # nothing changed: no upload
+            self.assertEqual(d.uploads, 1)
+            self.assertEqual(drive.pull(store, d, cfg), ["no new taps"])
+            # a project deleted on the page goes from the backup too
+            snap["projects"] = {}
+            d.drop("f3", snap)
+            drive.pull(store, d, cfg)
+            self.assertEqual(_json.loads((Path(tmp) / "projects.json").read_text())["projects"], {})
+
+    def test_off_without_setup(self):
+        from gtd import drive
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(drive.config(Store(tmp)))
+            with unittest.mock.patch.dict("os.environ", {"GOOGLE_SERVICE_ACCOUNT_JSON": ""}):
+                self.assertIsNone(drive.Drive.from_env())
+
+    def test_notify_only_new_inbox_items(self):
+        import json as _json
+        from gtd import cli
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            store.add(adapters.from_text("Already seen", via="telegram"))
+            before = {i.id for i in store.items(status=None)}
+            self.assertEqual(cli.notify_new(store, before), "nothing new")
+            store.add(adapters.from_text("Haircut Friday 3pm", via="telegram"))
+            (Path(tmp) / "state").mkdir(exist_ok=True)
+            (Path(tmp) / "state" / "telegram.json").write_text(_json.dumps({"owner_ids": [42]}))
+            sent = []
+            with unittest.mock.patch("gtd.telegram.TelegramAPI.call", lambda self, m, **kw: sent.append(kw)), \
+                 unittest.mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "x"}):
+                self.assertEqual(cli.notify_new(store, before), "told you about 1 new item(s)")
+            self.assertEqual(sent[0]["chat_id"], 42)
+            self.assertIn("Haircut Friday 3pm", sent[0]["text"])
