@@ -1018,3 +1018,25 @@ class DriveKeyTest(unittest.TestCase):
                                                          "TELEGRAM_BOT_TOKEN": ""}):
                 code = cli.main(["--home", tmp, "run"])                       # Drive fails, the rest still runs
             self.assertEqual(code, 1)
+
+
+class MobileLinkTest(unittest.TestCase):
+    """Gmail search links don't open the e-mail on a phone: link newsletters to their web version."""
+
+    def test_web_version_or_read_on_page(self):
+        from gtd import site
+        self.assertEqual(site.web_link("View this post on the web at https://x.substack.com/p/a\nHi"), "https://x.substack.com/p/a")
+        self.assertEqual(site.web_link("View in browser ( https://stratechery.com/?p=1 )"), "https://stratechery.com/?p=1")
+        self.assertEqual(site.web_link("to view the post online:\nhttps://r.example.com/p/deep"), "https://r.example.com/p/deep")
+        self.assertEqual(site.web_link("https://click.example.com/?q=1 \nView in browser"), "https://click.example.com/?q=1")
+        news = Item(title="Weekly", channel="email", via="gmail", content="View this post on the web at https://n.co/p/w\nBody",
+                    source={"from": "N <n@substack.com>", "link": "https://mail.google.com/mail/u/0/#search/rfc822msgid%3Aa"})
+        rec = site._record(news)
+        self.assertEqual((rec["url"], rec["body"]), ("https://n.co/p/w", ""))
+        self.assertTrue(rec["gmail"].startswith("https://mail.google.com"))
+        note = Item(title="Lunch?", channel="email", via="gmail",
+                    content="https://click.tracker.example.com/?qs=" + "x" * 80 + "\nAre you free Friday?",
+                    source={"from": "Ann <ann@example.com>", "link": "https://mail.google.com/mail/u/0/#search/rfc822msgid%3Ab"})
+        rec = site._record(note)
+        self.assertEqual(rec["body"], "Are you free Friday?")                  # tracking links dropped
+        self.assertTrue(rec["url"].startswith("https://mail.google.com"))      # nothing better to link to

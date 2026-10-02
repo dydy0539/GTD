@@ -20,6 +20,24 @@ SOURCES = {  # item.via → label shown in the filters
 SHOWN = ("inbox", "next", "waiting", "later", "someday", "reference")  # statuses the page lists (trash stays out)
 
 
+# Newsletters carry a link to their web version; it opens on any phone, unlike a Gmail search link
+_WEB = [re.compile(p, re.I) for p in (
+    r"View this post on the web at\s+(https?://\S+)",                              # Substack
+    r"View (?:it |this )?(?:in (?:your )?browser|online)\s*[\[(]\s*(https?://[^\s\])]+)",  # Stratechery, Ghost
+    r"view the post online:\s*(https?://\S+)",                                       # beehiiv
+    r"(https?://\S+)\s*\n\s*View in browser",                                          # link on the line before
+)]
+READ_MAX = 6000  # characters of an e-mail kept for reading on the page
+
+
+def web_link(text: str) -> str:
+    for rx in _WEB:
+        m = rx.search(text or "")
+        if m:
+            return m.group(1).rstrip(".,;")
+    return ""
+
+
 def _record(i: Item) -> dict:
     hints = i.extra.get("hints") or {}
     cal = i.extra.get("calendar")
@@ -32,13 +50,23 @@ def _record(i: Item) -> dict:
     snippet = " ".join(re.sub(r"<[^>]+>", " ", snippet).split())
     snippet = re.sub(r"^(View this post on the web at\s+\S+\s*|View in browser\s*\|?\s*)", "", snippet, flags=re.I)
     title = cal["summary"] if cal and cal.get("summary") else i.title
+    gmail = src.get("link", "") if "mail.google.com" in src.get("link", "") else ""
+    web = web_link(i.content) if i.channel == "email" else ""
+    body = ""
+    if i.channel == "email" and not web:  # no web version: keep the text so it can be read on the page
+        body = re.sub(r"<[^>]+>", " ", i.content or "")
+        body = re.sub(r"(?m)^[\s\[(<]*https?://\S+[\s\])>]*$", "", body)    # lines that are only a (tracking) link
+        body = re.sub(r"https?://\S{50,}", "[link]", body)                   # long links inside the text
+        body = re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+\n", "\n", body)).strip()
+        body = body[:READ_MAX] + ("…" if len(body) > READ_MAX else "")
     if snippet.lower().startswith(i.title.lower()[:40]):  # preview that only repeats the title
         snippet = snippet[len(i.title):].strip(" .·-—:") if len(snippet) > len(i.title) + 20 else ""
     return {
         "id": i.id, "status": i.status, "category": i.extra.get("category", ""),
         "waiting_on": i.extra.get("waiting_on", ""), "waiting_since": i.extra.get("waiting_since", ""), "title": title, "icon": i.icon, "channel": i.channel,
         "via": i.via, "source": SOURCES.get(i.via, i.via),
-        "url": src.get("url") or src.get("link") or "",
+        "url": web or src.get("url") or ("" if gmail else src.get("link", "")) or gmail,
+        "gmail": gmail, "body": body,
         "at": i.captured_at.isoformat(), "who": who[:80],
         "note": i.note, "snippet": snippet[:240],
         "tags": i.tags, "priority": hints.get("priority", ""),
@@ -122,6 +150,10 @@ section h2 .n{font-family:var(--mono);color:var(--faint);letter-spacing:0}
 a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 .meta{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
 .note{font-size:13px;color:var(--ink);border-left:2px solid var(--line);padding-left:8px}
+.meta .links{display:inline-flex;gap:10px;margin-left:8px}
+.meta .links a,.readbtn{color:var(--accent);font:inherit;font-size:12px;background:none;border:0;padding:0;cursor:pointer;text-decoration:none}
+.body{font-size:14px;line-height:1.5;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;max-height:60vh;overflow:auto;
+  margin-top:6px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--ground)}
 .snip{font-size:13px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .tags{display:flex;gap:4px;flex-wrap:wrap}
 .tag{font:500 11px var(--mono);color:var(--muted);background:var(--ground);border-radius:4px;padding:1px 6px}
@@ -289,7 +321,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   const ACTIONS = {done:'✓ Done', next:'✅ Next', waiting:'🕓 Waiting', trash:'🗑 Trash', later:'⏳ Review later', someday:'💭 Someday', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
   const DONE = {done:'Done', next:'Moved to Next actions', waiting:'Moved to Waiting for', trash:'Moved to Trash', later:'Saved for review later', someday:'Moved to Someday / maybe', reference:'Archived for reference', inbox:'Back in the in-tray'};
   const decided = {}, edits = {};
-  let editing = '', picking = '', filing = '', newCatFor = '', whoFor = '';
+  let editing = '', picking = '', filing = '', newCatFor = '', whoFor = '', reading = '';
   const categories = new Set();  // archive categories: from the page's database + those already used
   const waitOf = it => (decided[it.id] && decided[it.id].waiting_on !== undefined ? decided[it.id].waiting_on : it.waiting_on) || '';
   const waitingAge = it => { const d = decided[it.id], t = Date.parse((d && d.decision === 'waiting' && d.at) || it.waiting_since || it.at);
@@ -413,6 +445,10 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
           () => decide(it, prev, true));
     }
   }
+  onLists('click', e => {
+    const rb = e.target.closest('.readbtn');
+    if (rb) { reading = reading === rb.dataset.id ? '' : rb.dataset.id; render(); }
+  });
   onLists('click', async e => {
     if (!db) return;
     const ed = e.target.closest('.cal-edit');
@@ -478,7 +514,9 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   function row(it){
     const h = hrs(it);
     const titleHtml = it.url ? `<a class="t" href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a>` : `<span class="t">${esc(it.title)}</span>`;
-    const meta = [it.who, it.source].filter(Boolean).map(esc).join(' · ');
+    const links = [it.gmail && it.gmail !== it.url ? `<a href="${esc(it.gmail)}" target="_blank" rel="noopener">✉ Gmail</a>` : '',
+                   it.body ? `<button class="readbtn" data-id="${esc(it.id)}" aria-expanded="${reading === it.id}">📖 ${reading === it.id ? 'Close' : 'Read'}</button>` : ''].filter(Boolean).join('');
+    const meta = [it.who, it.source].filter(Boolean).map(esc).join(' · ') + (links ? `<span class="links">${links}</span>` : '');
     const tags = [...(it.priority === 'high' ? ['<span class="tag p-high">high</span>'] : []),
                   ...(it.priority === 'low' ? ['<span class="tag">low</span>'] : []),
                   ...(statusOf(it) === 'waiting' ? [`<span class="tag">🕓 ${waitOf(it) ? 'waiting on ' + esc(waitOf(it)) : 'waiting'} · ${waitingAge(it)}</span>`] : []),
@@ -518,7 +556,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     return `<article class="it ${esc(it.priority)}"><div class="ic" aria-hidden="true">${esc(it.icon)}</div>
       <div class="main">${title}${meta ? `<div class="meta">${meta}</div>` : ''}
         ${it.note ? `<div class="note">${esc(it.note)}</div>` : ''}
-        ${it.snippet ? `<div class="snip">${esc(it.snippet)}</div>` : ''}${cal}
+        ${reading === it.id ? `<div class="body">${esc(it.body)}</div>` : it.snippet ? `<div class="snip">${esc(it.snippet)}</div>` : ''}${cal}
         ${tags ? `<div class="tags">${tags}</div>` : ''}</div>
       <div class="age${h > 48 ? ' stale' : ''}" title="${esc(new Date(it.at).toLocaleString())}">${age(h)}</div>${acts}</article>`;
   }
