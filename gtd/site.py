@@ -241,6 +241,25 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   border-radius:6px;padding:6px 8px;min-width:0}
 .pform .wide{grid-column:1/-1}
 .pform .btns{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}
+.hstrip{display:flex;gap:4px;flex-wrap:wrap}
+.hstrip .c{display:grid;justify-items:center;gap:1px;min-width:34px;padding:3px 4px;border-radius:6px;background:var(--ground);font-size:11px;color:var(--faint)}
+.hstrip .c i{font-style:normal;font-weight:700;font-size:13px}
+.hstrip .c b{font-weight:500;font-family:var(--mono);font-size:10px}
+.hstrip .c.hit{background:var(--accent-soft);color:var(--accent)}
+.hstrip .c.miss{background:var(--high-soft);color:var(--high)}
+.hstrip .c.now{outline:1px dashed var(--line)}
+.hentries{list-style:none;margin:0;padding:0;display:grid;gap:3px;font-size:13px}
+.hentries li{display:flex;gap:8px;align-items:baseline}
+.hentries .d{font:12px var(--mono);color:var(--faint);min-width:52px}
+.hentries button{font:12px var(--sans);color:var(--faint);background:none;border:0;text-decoration:underline;cursor:pointer;padding:0;margin-left:auto}
+.hentries .more{color:var(--faint);font-size:12px}
+.hboard{display:grid;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
+.hboard div{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:14px}
+.hboard .mk{font-weight:700;width:14px}
+.hboard .hit .mk{color:var(--accent)}
+.hboard .miss .mk{color:var(--high)}
+.hboard .nm{font-weight:600}
+.hboard .v{font:12px var(--mono);color:var(--muted)}
 .primary{font:600 14px var(--sans);color:var(--surface);background:var(--accent);border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
 .nextlist{display:grid;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .nextlist .nx{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:9px 14px;border-top:1px solid var(--line);font-size:14px}
@@ -255,7 +274,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 @media (prefers-reduced-motion:no-preference){.it{transition:background .15s}.it:hover{background:var(--ground)}}
 </style>
 <div class="wrap">
-  <nav class="apps" aria-label="Pages"><a href="#tray" id="to-tray">📥 In-tray</a><a href="#next" id="to-next">✅ Next actions</a><a href="#waiting" id="to-wait">🕓 Waiting for</a><a href="#projects" id="to-proj">🎯 Projects</a><a href="#someday" id="to-someday">💭 Someday / maybe</a></nav>
+  <nav class="apps" aria-label="Pages"><a href="#tray" id="to-tray">📥 In-tray</a><a href="#next" id="to-next">✅ Next actions</a><a href="#waiting" id="to-wait">🕓 Waiting for</a><a href="#habits" id="to-habits">🔁 Habits</a><a href="#projects" id="to-proj">🎯 Projects</a><a href="#someday" id="to-someday">💭 Someday / maybe</a></nav>
   <div id="wait-view" hidden>
     <header class="head">
       <h1>Waiting for</h1>
@@ -276,6 +295,13 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       <div class="sum" id="ssum"></div>
     </header>
     <main id="sout"></main>
+  </div>
+  <div id="habits-view" hidden>
+    <header class="head">
+      <h1>Habits</h1>
+      <div class="sum" id="hsum"></div>
+    </header>
+    <main id="hout"></main>
   </div>
   <div id="proj-view" hidden>
     <header class="head">
@@ -316,7 +342,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   // Triage choices live in the page's database (decisions/<item id> = {decision, at});
   // `gtd decide` later writes them into the items themselves.
-  const onLists = (ev, fn) => ['out', 'sout', 'nout', 'wout', 'pout'].forEach(id => document.getElementById(id).addEventListener(ev, fn));
+  const onLists = (ev, fn) => ['out', 'sout', 'nout', 'wout', 'pout', 'hout'].forEach(id => document.getElementById(id).addEventListener(ev, fn));
   const VIEWS = [['inbox','In-tray'], ['later','Review later'], ['reference','Archive'], ['trash','Trash']];
   const ACTIONS = {done:'✓ Done', next:'✅ Next', waiting:'🕓 Waiting', trash:'🗑 Trash', later:'⏳ Review later', someday:'💭 Someday', reference:'🗄 Archive', inbox:'↩ Back to in-tray'};
   const DONE = {done:'Done', next:'Moved to Next actions', waiting:'Moved to Waiting for', trash:'Moved to Trash', later:'Saved for review later', someday:'Moved to Someday / maybe', reference:'Archived for reference', inbox:'Back in the in-tray'};
@@ -593,8 +619,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   const projects = {}, logs = {};
   let pform = null, doneFor = '', fileAfterCreate = '', otherFor = '', deleteArmed = false;
   const slug = name => 'project:' + String(name).toLowerCase().split(/\s+/).filter(Boolean).join('-');
-  const activeProjects = () => Object.values(projects).filter(p => p.status !== 'done')
-    .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'recurring' ? -1 : 1));
+  const isHabit = p => p.kind === 'recurring';
+  const activeProjects = () => Object.values(projects).filter(p => p.status !== 'done' && !isHabit(p)).sort((a, b) => a.name.localeCompare(b.name));
   const UNITS = {min: ['min', 'minutes'], sessions: ['session', 'sessions'], books: ['book', 'books']};
   const QUICK = {min: [20, 30, 45, 60], sessions: [1], books: [1]};
 
@@ -651,33 +677,6 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       ${db ? `<button class="act p-done" data-p="${esc(p.id)}">✓ Done → next</button>` : ''}</div>`;
   }
 
-  function recurringCard(p){
-    const t = p.target || {}, start = periodStart(t.period).getTime(), end = periodEnd(t.period).getTime();
-    const mine = logsFor(p, start), got = mine.reduce((n, [, l]) => n + (+l.amount || 0), 0);
-    const goal = +t.amount || 1, pct = Math.min(100, Math.round(got / goal * 100));
-    const elapsed = Math.min(1, (Date.now() - start) / (end - start));
-    const state = got >= goal ? 'done' : got < goal * elapsed * 0.8 ? 'behind' : 'ok';
-    const unit = UNITS[t.unit] || ['', ''], left = Math.max(0, goal - got);
-    const daysLeft = Math.ceil((end - Date.now()) / 864e5);
-    const per = t.period === 'month' ? 'this month' : 'this week';
-    const quick = (QUICK[t.unit] || [1]).map(a => `<button class="chipbtn p-log" data-p="${esc(p.id)}" data-a="${a}">+${a}${t.unit === 'min' ? ' min' : ''}</button>`).join('')
-      + (t.unit === 'min' ? (otherFor === p.id
-          ? `<span class="logs"><input type="number" min="1" class="p-other" data-p="${esc(p.id)}" placeholder="min" aria-label="Minutes" style="width:80px;font:14px var(--sans);padding:4px 8px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink)"><button class="chipbtn p-other-save" data-p="${esc(p.id)}">Log</button></span>`
-          : `<button class="chipbtn p-other-open" data-p="${esc(p.id)}">+ other</button>`) : '');
-    const recent = mine.slice(0, 3).map(([id, l]) =>
-      `${esc(new Date(l.at).toLocaleDateString(undefined, {weekday: 'short'}))} +${esc(l.amount)}${db ? ` <button class="p-unlog" data-l="${esc(id)}">undo</button>` : ''}`).join(' · ');
-    return `<article class="card"><h3>${esc(p.name)}<span class="per">${esc(t.max ? `${t.amount}–${t.max}` : t.amount)} ${esc(unit[1])} / ${esc(t.period || 'week')}</span></h3>
-      ${p.goal ? `<div class="goal"><b>Goal:</b> ${esc(p.goal)}</div>` : ''}
-      <div class="bar ${state}"><i style="width:${pct}%"></i></div>
-      <div class="prog"><span><b>${esc(got)}</b> / ${esc(goal)} ${esc(unit[1])} ${per}</span>
-        <span class="${state === 'behind' ? 'behind' : 'ok'}">${state === 'done' ? (t.max && got < t.max ? `✓ target met · ${t.max - got} to stretch` : '✓ done') : state === 'behind' ? `behind · ${left} to go, ${daysLeft}d left` : `${left} to go · ${daysLeft}d left`}</span></div>
-      ${db ? `<div class="logs">${quick}</div>` : ''}
-      ${recent ? `<div class="recent">${recent}</div>` : ''}
-      ${nextBlock(p)}
-      ${db ? `<div class="acts" style="grid-column:auto;margin:0"><button class="act p-edit" data-p="${esc(p.id)}">✎ Edit</button></div>` : ''}
-    </article>`;
-  }
-
   function oneoffCard(p){
     const tag = slug(p.name);
     const filed = all.filter(it => statusOf(it) !== 'next' && (it.tags.includes(tag) || (decided[it.id] && decided[it.id].project === p.name)));
@@ -693,9 +692,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   function formHtml(f){
     const p = f.id ? projects[f.id] : {kind: f.kind || 'oneoff', name: f.name || '', goal: '', next: {}, target: {unit: 'min', period: 'week'}};
-    const t = p.target || {unit: 'min', period: 'week'}, rec = (f.kind || p.kind) === 'recurring';
-    return `<div class="pform" id="pform">
-      <label>Type<select name="kind"><option value="oneoff"${rec ? '' : ' selected'}>One-off (has an end)</option><option value="recurring"${rec ? ' selected' : ''}>Recurring (a standard to keep)</option></select></label>
+    const t = p.target || {unit: 'min', period: 'week'}, rec = false;
+    return `<div class="pform" id="pform"><input type="hidden" name="kind" value="oneoff">
       <label class="wide">Name<input name="name" value="${esc(p.name)}" placeholder="${rec ? 'Zone 2 cardio' : 'Research: NVIDIA'}"></label>
       <label class="wide">${rec ? 'Why / goal' : 'End goal — what does done look like?'}<input name="goal" value="${esc(p.goal || '')}" placeholder="${rec ? 'Aerobic base for longevity' : 'Decide buy / pass with a one-page thesis'}"></label>
       ${rec ? `<label>Target<input type="number" min="1" name="amount" value="${esc(t.amount || '')}"></label>
@@ -709,20 +707,19 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   }
 
   function drawProjects(){
-    const act = activeProjects(), rec = act.filter(p => p.kind === 'recurring'), one = act.filter(p => p.kind !== 'recurring');
-    const done = Object.values(projects).filter(p => p.status === 'done');
+    const act = activeProjects(), one = act;
+    const done = Object.values(projects).filter(p => p.status === 'done' && !isHabit(p));
     const withNext = act.filter(p => p.next && p.next.text)
       .sort((a, b) => (a.next.when || '9999').localeCompare(b.next.when || '9999'));
     const over = withNext.filter(p => whenLabel(p.next.when)[1] === 'over').length;
-    document.getElementById('psum').innerHTML = `<span><b>${one.length}</b> one-off</span><span><b>${rec.length}</b> recurring</span>` +
+    document.getElementById('psum').innerHTML = `<span><b>${one.length}</b> active</span><span>Recurring standards live in <a href="#habits">🔁 Habits</a></span>` +
       (over ? `<span class="warn"><b>${over}</b> overdue</span>` : '') + (db ? '' : '<span>read-only here</span>');
     const out = document.getElementById('pout');
     if (!db && !act.length) { out.innerHTML = '<div class="empty">Open this page on claude.ai to see and edit your projects.</div>'; return; }
     const sec = (label, n, body) => `<section><h2>${esc(label)} <span class="n">${n}</span></h2>${body}</section>`;
     out.innerHTML =
       (pform ? sec(pform.id ? 'Edit project' : 'New project', '', formHtml(pform)) : (db ? `<div><button class="primary" id="p-new">+ New project</button></div>` : '')) +
-      (rec.length ? sec('Recurring', rec.length, `<div class="pgrid">${rec.map(recurringCard).join('')}</div>`) : '') +
-      (one.length ? sec('One-off', one.length, `<div class="pgrid">${one.map(oneoffCard).join('')}</div>`) : '') +
+      (one.length ? sec('Active', one.length, `<div class="pgrid">${one.map(oneoffCard).join('')}</div>`) : '') +
       (done.length ? sec('Done', done.length, `<div class="pgrid">${done.map(oneoffCard).join('')}</div>`) : '') +
       (!act.length && !pform ? '<div class="empty">No projects yet.</div>' : '');
   }
@@ -812,6 +809,192 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       drawProjects();
     }
   });
+
+  // ================= Habits =================
+  // A habit is a recurring standard: projects/<id> with kind 'recurring' and
+  // target {amount, max?, unit, period: day|week|month|quarter|year}; each logged bit is logs/<auto> {project, amount, at, note}.
+  // Progress counts the logs inside the current period, so it starts from zero on its own when a new period begins.
+  const PERIODS = {day: ['day', 'daily', 'today', 14], week: ['week', 'weekly', 'this week', 8], month: ['month', 'monthly', 'this month', 6],
+                   quarter: ['quarter', 'quarterly', 'this quarter', 4], year: ['year', 'yearly', 'this year', 3]};
+  const per = t => PERIODS[t && t.period] ? t.period : 'week';
+  function pStart(period, d = new Date()){
+    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    if (period === 'week') x.setDate(x.getDate() - ((x.getDay() + 6) % 7));                 // Monday
+    else if (period === 'month') x.setDate(1);
+    else if (period === 'quarter') { x.setDate(1); x.setMonth(x.getMonth() - x.getMonth() % 3); }
+    else if (period === 'year') { x.setDate(1); x.setMonth(0); }
+    return x;
+  }
+  function pShift(period, d, n){
+    const x = new Date(d);
+    if (period === 'day') x.setDate(x.getDate() + n); else if (period === 'week') x.setDate(x.getDate() + 7 * n);
+    else if (period === 'month') x.setMonth(x.getMonth() + n); else if (period === 'quarter') x.setMonth(x.getMonth() + 3 * n);
+    else x.setFullYear(x.getFullYear() + n);
+    return x;
+  }
+  function pLabel(period, d){
+    if (period === 'day') return d.toLocaleDateString(undefined, {weekday: 'narrow'}) + d.getDate();
+    if (period === 'week') return d.toLocaleDateString(undefined, {day: 'numeric', month: 'short'});
+    if (period === 'month') return d.toLocaleDateString(undefined, {month: 'short'});
+    if (period === 'quarter') return 'Q' + (Math.floor(d.getMonth() / 3) + 1);
+    return String(d.getFullYear());
+  }
+  const unitName = (u, n) => UNITS[u] ? UNITS[u][n === 1 ? 0 : 1] : (n === 1 ? String(u || '').replace(/s$/, '') : String(u || ''));
+  const HQUICK = {min: [15, 30, 45, 60], km: [5, 10], pages: [10, 25]};
+  const NOTE = {books: 'Book title', min: 'What did you do? (optional)', sessions: 'What did you do? (optional)', km: 'Where? (optional)'};
+  const habits = () => Object.values(projects).filter(p => isHabit(p) && p.status !== 'done').sort((a, b) => a.name.localeCompare(b.name));
+  const sumIn = (h, from, to) => Object.values(logs).filter(l => l.project === h.id && Date.parse(l.at) >= from && Date.parse(l.at) < to)
+    .reduce((n, l) => n + (+l.amount || 0), 0);
+  // the periods so far, oldest first: {start, end, got, state: 'hit'|'miss'|'none'|'now'}
+  function history(h){
+    const t = h.target || {}, period = per(t), goal = +t.amount || 1, n = PERIODS[period][3];
+    const created = Date.parse(h.created || 0) || 0, cur = pStart(period);
+    const out = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const start = pShift(period, cur, -i), end = pShift(period, start, 1), got = sumIn(h, +start, +end);
+      const state = i === 0 ? (got >= goal ? 'hit' : 'now')
+        : got >= goal ? 'hit' : +end <= created ? 'none' : +start < created ? 'none' : 'miss';  // a period it only partly existed in counts only if met
+      out.push({start, end, got, state});
+    }
+    return out;
+  }
+  function stats(h){
+    const hist = history(h), past = hist.slice(0, -1).filter(x => x.state !== 'none');
+    let streak = hist[hist.length - 1].state === 'hit' ? 1 : 0;
+    for (let i = hist.length - 2; i >= 0 && hist[i].state === 'hit'; i--) streak++;
+    return {hist, hits: past.filter(x => x.state === 'hit').length, counted: past.length, streak, last: past[past.length - 1]};
+  }
+  let hform = null, logFor = '', hDeleteArmed = false;
+
+  function habitCard(h){
+    const t = h.target || {}, period = per(t), [pname, , pnow] = PERIODS[period];
+    const start = +pStart(period), end = +pShift(period, pStart(period), 1);
+    const got = sumIn(h, start, end), goal = +t.amount || 1, pct = Math.min(100, Math.round(got / goal * 100));
+    const elapsed = Math.min(1, (Date.now() - start) / (end - start));
+    const state = got >= goal ? 'done' : got < goal * elapsed * 0.8 ? 'behind' : 'ok';
+    const left = Math.max(0, goal - got), daysLeft = Math.max(1, Math.ceil((end - Date.now()) / 864e5));
+    const timeLeft = period === 'day' ? `${Math.max(1, Math.ceil((end - Date.now()) / 36e5))}h left` : `${daysLeft}d left`;
+    const st = stats(h);
+    const quick = t.unit === 'books' ? `<button class="chipbtn h-open" data-h="${esc(h.id)}">📖 Log a book</button>`
+      : (HQUICK[t.unit] || [1]).map(a => `<button class="chipbtn h-log" data-h="${esc(h.id)}" data-a="${a}">+${a} ${esc(unitName(t.unit, a))}</button>`).join('')
+        + `<button class="chipbtn h-open" data-h="${esc(h.id)}">+ other…</button>`;
+    const today = localIso(new Date()).slice(0, 10);
+    const form = logFor === h.id ? `<div class="pform hlog" data-h="${esc(h.id)}">
+        <label>${esc(unitName(t.unit, 2) || 'Amount')}<input type="number" min="0" step="any" name="amount" value="${t.unit === 'books' ? 1 : ''}" inputmode="decimal"></label>
+        <label>Day<input type="date" name="day" value="${today}" max="${today}"></label>
+        <label class="wide">${esc(NOTE[t.unit] || 'Note (optional)')}<input name="note" placeholder="${esc(NOTE[t.unit] || 'Note (optional)')}"></label>
+        <div class="btns"><button class="primary h-save" data-h="${esc(h.id)}">Log it</button><button class="act h-cancel">Cancel</button></div></div>` : '';
+    const mine = Object.entries(logs).filter(([, l]) => l.project === h.id && Date.parse(l.at) >= start && Date.parse(l.at) < end)
+      .sort((a, b) => Date.parse(b[1].at) - Date.parse(a[1].at));
+    const entries = mine.length ? `<ul class="hentries">${mine.slice(0, 8).map(([id, l]) => `<li><span class="d">${esc(period === 'day'
+        ? new Date(l.at).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'}) : new Date(l.at).toLocaleDateString(undefined, {weekday: 'short', day: 'numeric'}))}</span>
+        <span>${t.unit === 'books' ? '📖 ' + esc(l.note || 'a book') : `+${esc(l.amount)} ${esc(unitName(t.unit, +l.amount))}${l.note ? ' · ' + esc(l.note) : ''}`}</span>
+        ${db ? `<button class="h-unlog" data-l="${esc(id)}">undo</button>` : ''}</li>`).join('')}${mine.length > 8 ? `<li class="more">+${mine.length - 8} more</li>` : ''}</ul>` : '';
+    const strip = `<div class="hstrip" aria-label="Recent ${pname}s">${st.hist.map(x =>
+      `<span class="c ${x.state}" title="${esc(pLabel(period, x.start))}: ${esc(x.got)} / ${esc(goal)}"><i>${x.state === 'hit' ? '✓' : x.state === 'miss' ? '✗' : x.state === 'now' ? '…' : '·'}</i><b>${esc(pLabel(period, x.start))}</b></span>`).join('')}</div>`;
+    const record = [st.streak > 1 ? `🔥 ${st.streak} ${pname}s in a row` : '', st.counted ? `hit ${st.hits} of the last ${st.counted} ${pname}${st.counted === 1 ? '' : 's'}` : `first ${pname}`].filter(Boolean).join(' · ');
+    return `<article class="card habit"><h3>${esc(h.name)}<span class="per">${esc(t.max ? `${t.amount}–${t.max}` : t.amount)} ${esc(unitName(t.unit, +t.amount))} / ${esc(pname)}</span></h3>
+      ${h.goal ? `<div class="goal"><b>Why:</b> ${esc(h.goal)}</div>` : ''}
+      <div class="bar ${state}"><i style="width:${pct}%"></i></div>
+      <div class="prog"><span><b>${esc(got)}</b> / ${esc(goal)} ${esc(unitName(t.unit, goal))} ${esc(pnow)}</span>
+        <span class="${state === 'behind' ? 'behind' : 'ok'}">${state === 'done' ? (t.max && got < t.max ? `✓ goal met · ${t.max - got} to stretch` : '✓ goal met') : state === 'behind' ? `behind · ${left} to go, ${timeLeft}` : `${left} to go · ${timeLeft}`}</span></div>
+      ${db ? `<div class="logs">${quick}</div>${form}` : ''}
+      ${entries}
+      ${strip}<div class="recent">${esc(record)}</div>
+      ${db ? `<div class="acts" style="grid-column:auto;margin:0"><button class="act h-edit" data-h="${esc(h.id)}">✎ Edit</button></div>` : ''}
+    </article>`;
+  }
+
+  function habitForm(f){
+    const h = f.id ? projects[f.id] : {name: '', goal: '', target: {unit: 'min', period: 'week'}};
+    const t = h.target || {}, period = per(t);
+    return `<div class="pform" id="hform">
+      <label class="wide">Habit<input name="name" value="${esc(h.name)}" placeholder="Zone 2 cardio"></label>
+      <label class="wide">Why (optional)<input name="goal" value="${esc(h.goal || '')}" placeholder="Aerobic base for longevity"></label>
+      <label>Goal<input type="number" min="0" step="any" name="amount" value="${esc(t.amount || '')}" placeholder="150" inputmode="decimal"></label>
+      <label>Unit<input name="unit" list="hunits" value="${esc(UNITS[t.unit] ? UNITS[t.unit][1] : t.unit || 'minutes')}"></label>
+      <datalist id="hunits"><option value="minutes"><option value="sessions"><option value="books"><option value="pages"><option value="km"><option value="times"></datalist>
+      <label>Every<select name="period">${Object.entries(PERIODS).map(([k, v]) => `<option value="${k}"${period === k ? ' selected' : ''}>${v[0]} (${v[1]})</option>`).join('')}</select></label>
+      <label>Stretch (optional)<input type="number" min="0" step="any" name="max" value="${esc(t.max || '')}" inputmode="decimal"></label>
+      <div class="btns"><button class="primary hf-save">${f.id ? 'Save' : 'Add habit'}</button><button class="act hf-cancel">Cancel</button>
+        ${f.id ? `<button class="act trash hf-delete" style="margin-left:auto">${hDeleteArmed ? 'Tap again to delete' : 'Delete habit'}</button>` : ''}</div></div>`;
+  }
+
+  function drawHabits(){
+    const list = habits(), out = document.getElementById('hout');
+    const scored = list.map(h => [h, stats(h)]);
+    const onTrack = list.filter(h => { const t = h.target || {}, p = per(t), s0 = +pStart(p), e0 = +pShift(p, pStart(p), 1);
+      const got = sumIn(h, s0, e0); return got >= (+t.amount || 1) * Math.min(1, (Date.now() - s0) / (e0 - s0)) * 0.8; }).length;
+    const last = scored.filter(([, s]) => s.last), hit = last.filter(([, s]) => s.last.state === 'hit');
+    document.getElementById('hsum').innerHTML = list.length ? `<span><b>${onTrack}</b> of ${list.length} on track now</span>` +
+      (last.length ? `<span${hit.length < last.length ? ' class="warn"' : ''}>last time: <b>${hit.length}</b> of ${last.length} met</span>` : '') : '<span>Standards you keep up, logged as you go.</span>';
+    if (!db && !list.length) { out.innerHTML = '<div class="empty">Open this page on claude.ai to see and log your habits.</div>'; return; }
+    const sec = (label, n, body) => `<section><h2>${esc(label)}${n !== '' ? ` <span class="n">${n}</span>` : ''}</h2>${body}</section>`;
+    const board = last.length ? sec('How you did last time', '', `<div class="hboard">${last.map(([h, s]) => {
+      const t = h.target || {}, p = per(t);
+      return `<div class="${s.last.state}"><span class="mk">${s.last.state === 'hit' ? '✓' : '✗'}</span><span class="nm">${esc(h.name)}</span>
+        <span class="v">${esc(s.last.got)} / ${esc(t.amount)} ${esc(unitName(t.unit, +t.amount))} · ${p === 'week' ? 'week of ' : ''}${esc(pLabel(p, s.last.start))}</span></div>`; }).join('')}</div>`) : '';
+    out.innerHTML =
+      (hform ? sec(hform.id ? 'Edit habit' : 'New habit', '', habitForm(hform)) : (db ? `<div><button class="primary" id="h-new">+ New habit</button></div>` : '')) +
+      board +
+      (list.length ? sec('This period', list.length, `<div class="pgrid">${list.map(habitCard).join('')}</div>`)
+                   : (!hform ? '<div class="empty">No habits yet. Add one, e.g. 150 minutes of zone 2 cardio a week.</div>' : ''));
+  }
+
+  async function logHabit(h, amount, at, note){
+    const entry = {project: h.id, amount, at, ...(note ? {note} : {})};
+    const ref = db.collection('logs').doc(); logs[ref.id] = entry; render();
+    const t = h.target || {};
+    try { await ref.set(entry);
+      say(t.unit === 'books' ? `📖 ${note || 'Book'} · ${h.name}` : `Logged ${amount} ${unitName(t.unit, amount)} · ${h.name}`, async () => {
+        delete logs[ref.id]; render(); try { await ref.delete(); } catch (err) {} });
+    } catch (err) { delete logs[ref.id]; render(); say('Couldn’t log that. Try again.'); }
+  }
+  document.getElementById('hout').addEventListener('click', async e => {
+    if (!db) return;
+    const t = e.target, hid = (t.closest('[data-h]') || {}).dataset?.h, h = hid && projects[hid];
+    if (t.closest('#h-new')) { hform = {}; render(); return; }
+    if (t.closest('.hf-cancel')) { hform = null; render(); return; }
+    if (t.closest('.h-edit')) { hform = {id: hid}; render(); window.scrollTo({top: 0}); return; }
+    if (t.closest('.hf-delete')) {
+      if (!hDeleteArmed) { hDeleteArmed = true; render(); setTimeout(() => { if (hDeleteArmed) { hDeleteArmed = false; render(); } }, 4000); return; }
+      hDeleteArmed = false;
+      const id = hform.id; delete projects[id]; hform = null; render();
+      try { await db.doc('projects/' + id).delete(); } catch (err) { say('Couldn’t delete. Try again.'); }
+      return;
+    }
+    if (t.closest('.hf-save')) {
+      const f = document.getElementById('hform'), v = n => (f.querySelector(`[name=${n}]`) || {}).value?.trim() || '';
+      if (!v('name')) { say('Give the habit a name.'); return; }
+      if (!(+v('amount') > 0)) { say('Set a goal, e.g. 150.'); return; }
+      const typed = v('unit').toLowerCase() || 'times';
+      const unit = Object.keys(UNITS).find(k => k === typed || UNITS[k][0] === typed || UNITS[k][1] === typed) || typed;
+      await saveProject(hform.id, {kind: 'recurring', name: v('name'), goal: v('goal'),
+        target: {amount: +v('amount'), unit, period: v('period'), ...(+v('max') > +v('amount') ? {max: +v('max')} : {})}});
+      hform = null; render();
+      return;
+    }
+    if (t.closest('.h-open')) { logFor = logFor === hid ? '' : hid; render();
+      const box = document.querySelector(`.hlog[data-h="${CSS.escape(hid)}"] [name=${h && (h.target || {}).unit === 'books' ? 'note' : 'amount'}]`); if (box) box.focus(); return; }
+    if (t.closest('.h-cancel')) { logFor = ''; render(); return; }
+    const q = t.closest('.h-log');
+    if (q && h) { logHabit(h, +q.dataset.a, new Date().toISOString()); return; }
+    if (t.closest('.h-save') && h) {
+      const f = t.closest('.hlog'), amount = +f.querySelector('[name=amount]').value, day = f.querySelector('[name=day]').value;
+      const note = f.querySelector('[name=note]').value.trim();
+      if (!(amount > 0)) { say('How much? e.g. 30'); return; }
+      const today = localIso(new Date()).slice(0, 10);
+      const at = !day || day === today ? new Date().toISOString() : new Date(day + 'T12:00').toISOString();  // an earlier day counts in its own period
+      logFor = ''; logHabit(h, amount, at, note);
+      return;
+    }
+    const ul = t.closest('.h-unlog');
+    if (ul) { const id = ul.dataset.l, keep = logs[id]; delete logs[id]; render();
+      try { await db.doc('logs/' + id).delete(); } catch (err) { logs[id] = keep; render(); } }
+  });
+  document.getElementById('hout').addEventListener('keydown', e => {
+    const f = e.target.closest('.hlog'); if (f && e.key === 'Enter') { const b = f.querySelector('.h-save'); if (b) b.click(); }
+  });
   // Someday / maybe: type an idea straight in
   let somedayDraft = '';
   async function addSomeday(){
@@ -875,8 +1058,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       snap.docs.forEach(d => { const v = d.data(); if (v && v.name) projects[d.id] = {...v, id: d.id}; });
       render();
     }, () => {});
-    const since = new Date(); since.setDate(1); since.setMonth(since.getMonth() - 1);  // this and last month
-    db.collection('logs').where('at', '>=', since.toISOString()).onSnapshot(snap => {
+    db.collection('logs').onSnapshot(snap => {
       for (const k of Object.keys(logs)) delete logs[k];
       snap.docs.forEach(d => { logs[d.id] = d.data(); });
       render();
@@ -1042,8 +1224,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   loadLive();
 
   function route(){
-    const page = location.hash === '#projects' ? 'proj' : location.hash === '#someday' ? 'someday' : location.hash === '#next' ? 'next' : location.hash === '#waiting' ? 'wait' : 'tray';
-    for (const [v, nav] of [['proj', 'to-proj'], ['someday', 'to-someday'], ['next', 'to-next'], ['wait', 'to-wait'], ['tray', 'to-tray']]) {
+    const page = location.hash === '#habits' ? 'habits' : location.hash === '#projects' ? 'proj' : location.hash === '#someday' ? 'someday' : location.hash === '#next' ? 'next' : location.hash === '#waiting' ? 'wait' : 'tray';
+    for (const [v, nav] of [['habits', 'to-habits'], ['proj', 'to-proj'], ['someday', 'to-someday'], ['next', 'to-next'], ['wait', 'to-wait'], ['tray', 'to-tray']]) {
       document.getElementById(v + '-view').hidden = page !== v;
       document.getElementById(nav).setAttribute('aria-current', page === v ? 'page' : 'false');
     }
@@ -1051,7 +1233,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   }
   window.addEventListener('hashchange', route);
 
-  function render(){ drawSummary(); drawChips(); draw(); if (location.hash === '#projects') drawProjects(); if (location.hash === '#someday') drawSomeday(); if (location.hash === '#next') drawNext(); if (location.hash === '#waiting') drawWaiting(); }
+  function render(){ drawSummary(); drawChips(); draw(); if (location.hash === '#projects') drawProjects(); if (location.hash === '#habits') drawHabits(); if (location.hash === '#someday') drawSomeday(); if (location.hash === '#next') drawNext(); if (location.hash === '#waiting') drawWaiting(); }
   route();
 })();
 </script>
