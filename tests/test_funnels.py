@@ -992,7 +992,10 @@ class DriveBridgeTest(unittest.TestCase):
             store.add(adapters.from_text("Already seen", via="telegram"))
             before = {i.id for i in store.items(status=None)}
             self.assertEqual(cli.notify_new(store, before), "nothing new")
-            store.add(adapters.from_text("Haircut Friday 3pm", via="telegram"))
+            store.add(adapters.from_text("Newsletter from Gmail", via="gmail"))       # Gmail stays quiet
+            store.add(adapters.from_text("Sent to the bot", via="telegram"))         # already confirmed by the bot
+            self.assertEqual(cli.notify_new(store, before), "nothing new")
+            store.add(adapters.from_text("Haircut Friday 3pm", via="email-to-self"))
             (Path(tmp) / "state").mkdir(exist_ok=True)
             (Path(tmp) / "state" / "telegram.json").write_text(_json.dumps({"owner_ids": [42]}))
             sent = []

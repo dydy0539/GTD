@@ -224,6 +224,9 @@ def cmd_run(store: Store, a: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+QUIET_VIA = {"gmail", "telegram"}
+
+
 def notify_new(store: Store, before: set[str]) -> str:
     """Tell you on Telegram when new stuff reached the in-tray (silently at night)."""
     import json
@@ -231,7 +234,9 @@ def notify_new(store: Store, before: set[str]) -> str:
     from .here import current
     from .telegram import TelegramAPI, token_from_env
 
-    new = [i for i in store.items() if i.id not in before]  # new and still in the in-tray (not skipped by a rule)
+    # new and still in the in-tray (not skipped by a rule); Gmail stays quiet (it's on the page), and what you
+    # sent to the bot was already confirmed when it arrived
+    new = [i for i in store.items() if i.id not in before and i.via not in QUIET_VIA]
     if not new:
         return "nothing new"
     path = store.home / "state" / "telegram.json"
