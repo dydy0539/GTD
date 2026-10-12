@@ -241,6 +241,16 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   border-radius:6px;padding:6px 8px;min-width:0}
 .pform .wide{grid-column:1/-1}
 .pform .btns{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}
+.pnotes{display:grid;gap:4px;border-top:1px dashed var(--line);padding-top:8px}
+.pnotes .lbl{font:600 11px var(--sans);text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
+.pnotes .pn{display:flex;gap:8px;align-items:baseline;font-size:14px}
+.pnotes .pn .d{font:12px var(--mono);color:var(--faint);white-space:nowrap}
+.pnotes .pn .tx{white-space:pre-wrap;overflow-wrap:anywhere;flex:1}
+.pnotes .pn-del{font-size:12px;color:var(--faint);background:none;border:0;cursor:pointer;padding:0 2px}
+.pnotes .pn-all{justify-self:start;font:12px var(--sans);color:var(--accent);background:none;border:0;padding:0;cursor:pointer}
+.pnotes .pn-new{display:flex;gap:6px;align-items:flex-end}
+.pnotes textarea{flex:1;min-width:0;font:14px/1.4 var(--sans);color:var(--ink);background:var(--surface);border:1px solid var(--line);
+  border-radius:6px;padding:6px 8px;resize:vertical}
 .hstrip{display:flex;gap:4px;flex-wrap:wrap}
 .hstrip .c{display:grid;justify-items:center;gap:1px;min-width:34px;padding:3px 4px;border-radius:6px;background:var(--ground);font-size:11px;color:var(--faint)}
 .hstrip .c i{font-style:normal;font-weight:700;font-size:13px}
@@ -677,12 +687,27 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       ${db ? `<button class="act p-done" data-p="${esc(p.id)}">✓ Done → next</button>` : ''}</div>`;
   }
 
+  // progress notes: projects/<id>.notes = [{text, at}], newest first
+  const noteDraft = {}, notesOpen = new Set();
+  function notesBlock(p){
+    const notes = p.notes || [], open = notesOpen.has(p.id), shown = open ? notes : notes.slice(0, 3);
+    if (!notes.length && !db) return '';
+    const day = at => new Date(at).toLocaleDateString(undefined, {weekday: 'short', day: 'numeric', month: 'short'});
+    return `<div class="pnotes"><span class="lbl">Progress notes${notes.length ? ` (${notes.length})` : ''}</span>
+      ${shown.map(n => `<div class="pn"><span class="d">${esc(day(n.at))}</span><span class="tx">${esc(n.text)}</span>
+        ${db ? `<button class="pn-del" data-p="${esc(p.id)}" data-at="${esc(n.at)}" aria-label="Delete note">✕</button>` : ''}</div>`).join('')}
+      ${notes.length > 3 ? `<button class="pn-all" data-p="${esc(p.id)}">${open ? 'Show fewer' : `Show all ${notes.length}`}</button>` : ''}
+      ${db ? `<div class="pn-new"><textarea class="pn-text" data-p="${esc(p.id)}" rows="2" placeholder="Where things stand, what you found, what's blocking…">${esc(noteDraft[p.id] || '')}</textarea>
+        <button class="act pn-add" data-p="${esc(p.id)}">Add note</button></div>` : ''}</div>`;
+  }
+
   function oneoffCard(p){
     const tag = slug(p.name);
     const filed = all.filter(it => statusOf(it) !== 'next' && (it.tags.includes(tag) || (decided[it.id] && decided[it.id].project === p.name)));
     return `<article class="card"><h3>${esc(p.name)}<span class="per">${p.status === 'done' ? 'done' : 'one-off'}</span></h3>
       <div class="goal"><b>End goal:</b> ${p.goal ? esc(p.goal) : '<i>not set yet — what does done look like?</i>'}</div>
       ${p.status !== 'done' ? nextBlock(p) : ''}
+      ${notesBlock(p)}
       ${filed.length ? `<div class="filed"><span class="lbl" style="font:600 11px var(--sans);text-transform:uppercase;letter-spacing:.06em;color:var(--faint)">Material (${filed.length})</span>
         ${filed.slice(0, 6).map(it => it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.icon)} ${esc(it.title)}</a>` : `<span>${esc(it.icon)} ${esc(it.title)}</span>`).join('')}</div>` : ''}
       ${db ? `<div class="acts" style="grid-column:auto;margin:0"><button class="act p-edit" data-p="${esc(p.id)}">✎ Edit</button>
@@ -761,6 +786,22 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       fileAfterCreate = ''; render();
       return;
     }
+    if (t.closest('.pn-add')) {
+      const text = (noteDraft[pid] || '').trim();
+      if (!text) { const box = document.querySelector(`.pn-text[data-p="${CSS.escape(pid)}"]`); if (box) box.focus(); return; }
+      delete noteDraft[pid];
+      await saveProject(pid, {notes: [{text, at: new Date().toISOString()}, ...(projects[pid].notes || [])]});
+      say('Note added · ' + projects[pid].name);
+      return;
+    }
+    if (t.closest('.pn-all')) { notesOpen.has(pid) ? notesOpen.delete(pid) : notesOpen.add(pid); render(); return; }
+    const nd = t.closest('.pn-del');
+    if (nd) {
+      const before = projects[pid].notes || [];
+      await saveProject(pid, {notes: before.filter(n => n.at !== nd.dataset.at)});
+      say('Note deleted', () => saveProject(pid, {notes: before}));
+      return;
+    }
     if (t.closest('.p-done')) { doneFor = pid; render(); return; }
     if (t.closest('.pn-cancel')) { doneFor = ''; render(); return; }
     if (t.closest('.pn-save')) {
@@ -802,6 +843,9 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     if (ul) { const id = ul.dataset.l; const keep = logs[id]; delete logs[id]; render();
       try { await db.doc('logs/' + id).delete(); } catch (err) { logs[id] = keep; render(); } }
   }));
+  document.getElementById('pout').addEventListener('input', e => {
+    if (e.target.classList.contains('pn-text')) noteDraft[e.target.dataset.p] = e.target.value;
+  });
   document.getElementById('pout').addEventListener('change', e => {
     if (e.target.name === 'kind' && pform) {  // switching type redraws the form, keeping what was typed
       const f = document.getElementById('pform');
