@@ -289,6 +289,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     <header class="head">
       <h1>Waiting for</h1>
       <div class="sum" id="wsum"></div>
+      <div class="chips" id="wchips" aria-label="Filter by source"></div>
     </header>
     <main id="wout"></main>
   </div>
@@ -296,6 +297,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     <header class="head">
       <h1>Next actions</h1>
       <div class="sum" id="nsum"></div>
+      <div class="chips" id="nchips" aria-label="Filter by source"></div>
     </header>
     <main id="nout"></main>
   </div>
@@ -303,6 +305,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     <header class="head">
       <h1>Someday / maybe</h1>
       <div class="sum" id="ssum"></div>
+      <div class="chips" id="schips" aria-label="Filter by source"></div>
     </header>
     <main id="sout"></main>
   </div>
@@ -1110,7 +1113,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   }
 
   function drawSomeday(){
-    const items = all.filter(it => statusOf(it) === 'someday');
+    const keepS = drawListChips('schips', all.filter(it => statusOf(it) === 'someday'));
+    const items = all.filter(it => statusOf(it) === 'someday' && keepS(it));
     document.getElementById('ssum').innerHTML = `<span><b>${items.length}</b> idea${items.length === 1 ? '' : 's'}</span>` +
       '<span>Things you might do one day, but not now. Look through it weekly.</span>';
     const addbox = db ? `<div class="addbox"><input id="someday-new" placeholder="Something you might want to do one day…" aria-label="New someday / maybe idea" value="${esc(somedayDraft)}"><button class="primary" id="someday-add">Add</button></div>` : '';
@@ -1121,10 +1125,30 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   }
 
   let nextDraft = '';
+  // source chips on the Next actions / Waiting for / Someday lists (same idea as the In-tray's)
+  const PROJ_SRC = '🎯 Projects', listSource = {nchips: '', wchips: '', schips: ''};
+  function drawListChips(id, items, projN = 0){
+    const counts = {};
+    items.forEach(it => counts[it.source] = (counts[it.source] || 0) + 1);
+    if (projN) counts[PROJ_SRC] = projN;
+    if (listSource[id] && !counts[listSource[id]]) listSource[id] = '';
+    const total = items.length + projN, cur = listSource[id];
+    document.getElementById(id).innerHTML = Object.keys(counts).length < 2 ? '' :
+      [['', 'All', total], ...Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => [k, k, n])]
+        .map(([v, l, n]) => `<button class="chip" data-s="${esc(v)}" aria-pressed="${v === cur}">${esc(l)}<span class="n">${n}</span></button>`).join('');
+    return it => !cur || it.source === cur;
+  }
+  for (const id of Object.keys(listSource)) document.getElementById(id).addEventListener('click', e => {
+    const b = e.target.closest('.chip'); if (!b) return; listSource[id] = b.dataset.s; render();
+  });
+
   function drawNext(){
-    const items = all.filter(it => statusOf(it) === 'next');
-    const withNext = activeProjects().filter(p => p.next && p.next.text)
+    const withNextAll = activeProjects().filter(p => p.next && p.next.text)
       .sort((a, b) => (a.next.when || '9999').localeCompare(b.next.when || '9999'));
+    const keep = drawListChips('nchips', all.filter(it => statusOf(it) === 'next'), withNextAll.length);
+    const src = listSource.nchips;
+    const items = src === PROJ_SRC ? [] : all.filter(it => statusOf(it) === 'next' && keep(it));
+    const withNext = !src || src === PROJ_SRC ? withNextAll : [];
     const over = withNext.filter(p => whenLabel(p.next.when)[1] === 'over').length;
     document.getElementById('nsum').innerHTML = `<span><b>${items.length + withNext.length}</b> next action${items.length + withNext.length === 1 ? '' : 's'}</span>` +
       (over ? `<span class="warn"><b>${over}</b> overdue</span>` : '') + '<span>The very next physical step for each thing you’ve committed to.</span>';
@@ -1154,7 +1178,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   let waitDraft = {text: '', who: ''};
   function drawWaiting(){
-    const items = all.filter(it => statusOf(it) === 'waiting')
+    const keepW = drawListChips('wchips', all.filter(it => statusOf(it) === 'waiting'));
+    const items = all.filter(it => statusOf(it) === 'waiting' && keepW(it))
       .sort((a, b) => Date.parse((decided[a.id] && decided[a.id].at) || a.waiting_since || a.at) - Date.parse((decided[b.id] && decided[b.id].at) || b.waiting_since || b.at));  // longest wait first
     const old = items.filter(it => /waiting (\d+)d/.test(waitingAge(it)) && +waitingAge(it).match(/\d+/)[0] >= 7).length;
     document.getElementById('wsum').innerHTML = `<span><b>${items.length}</b> waiting</span>` +
