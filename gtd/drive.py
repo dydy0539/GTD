@@ -111,7 +111,7 @@ def to_decisions(snapshot: dict, applied: set[str]) -> tuple[dict, list[str]]:
         key = f"decisions/{item_id}@{v.get('at', '')}"
         if not v.get("decision") or key in applied:
             continue
-        decisions[item_id] = {k: v[k] for k in ("decision", "project", "category", "waiting_on", "at") if k in v}
+        decisions[item_id] = {k: v[k] for k in ("decision", "project", "category", "waiting_on", "priority", "at") if k in v}
         keys.append(key)
     for item_id, v in (snapshot.get("edits") or {}).items():
         key = f"edits/{item_id}@{v.get('at', '')}"

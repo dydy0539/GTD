@@ -75,6 +75,14 @@ def apply(store: Store, decisions) -> list[str]:
             else:
                 item.extra.pop("category", None)
             extra["category"] = d["category"]
+        if "priority" in d and d["priority"] != (item.extra.get("hints") or {}).get("priority", ""):
+            hints = dict(item.extra.get("hints") or {})
+            if d["priority"]:
+                hints["priority"] = d["priority"]
+            else:
+                hints.pop("priority", None)
+            item.extra["hints"] = hints
+            extra["priority"] = d["priority"]
         if d.get("note") and d["note"] not in item.note:
             item.note = f"{item.note}\n{d['note']}".strip()
             extra["note"] = d["note"]

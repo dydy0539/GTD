@@ -1043,3 +1043,18 @@ class MobileLinkTest(unittest.TestCase):
         rec = site._record(note)
         self.assertEqual(rec["body"], "Are you free Friday?")                  # tracking links dropped
         self.assertTrue(rec["url"].startswith("https://mail.google.com"))      # nothing better to link to
+
+
+class PriorityFlagTest(unittest.TestCase):
+    def test_priority_set_and_cleared_from_the_page(self):
+        from gtd import drive
+        from gtd.decide import apply
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            a, _ = store.add(adapters.from_text("Call the accountant", via="telegram"))
+            decisions, _ = drive.to_decisions({"decisions": {a.id: {"decision": "next", "priority": "high", "at": "t1"}}}, set())
+            apply(store, decisions)
+            got = store.get(a.id)
+            self.assertEqual((got.status, got.extra["hints"]["priority"]), ("next", "high"))
+            apply(store, {a.id: {"decision": "next", "priority": "", "at": "t2"}})       # starred off again
+            self.assertNotIn("priority", store.get(a.id).extra.get("hints", {}))

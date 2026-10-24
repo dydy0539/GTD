@@ -241,6 +241,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   border-radius:6px;padding:6px 8px;min-width:0}
 .pform .wide{grid-column:1/-1}
 .pform .btns{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}
+.act.prio.on{color:var(--stale);border-color:var(--stale);font-weight:600}
 .pnotes{display:grid;gap:4px;border-top:1px dashed var(--line);padding-top:8px}
 .pnotes .lbl{font:600 11px var(--sans);text-transform:uppercase;letter-spacing:.06em;color:var(--faint)}
 .pnotes .pn{display:flex;gap:8px;align-items:baseline;font-size:14px}
@@ -368,6 +369,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   const catOf = it => (decided[it.id] && decided[it.id].category) || it.category || '';
   const allCategories = () => [...new Set([...categories, ...all.map(catOf).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
   const statusOf = it => (decided[it.id] && decided[it.id].decision) || it.status;
+  const prioOf = it => (decided[it.id] && decided[it.id].priority !== undefined ? decided[it.id].priority : it.priority) || '';
+  const byPrio = (a, b) => (prioOf(b) === 'high') - (prioOf(a) === 'high');  // priority first, otherwise keep the order
   // Appointment changes from the Edit form live in edits/<item id> = {start, end, location, summary, at}
   const pad = n => String(n).padStart(2, '0');
   const localIso = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -392,7 +395,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   const fmtDay = d => d.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'});
 
   const KINDS = [
-    ['attention','Needs attention', it => it.priority === 'high'],
+    ['attention','Needs attention', it => prioOf(it) === 'high'],
     ['appointments','Appointments', it => !!calOf(it)],
     ['notes','Notes & to-dos', it => ['text','message','image','file','audio'].includes(it.channel) && ['telegram','email-to-self','cli','claude'].includes(it.via)],
     ['research','Research to read', it => it.tags.includes('research')],
@@ -426,7 +429,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
       `<span><b>${items.length}</b> in the tray</span>` +
       (items.length ? `<span${oldest > 48 ? ' class="warn"' : ''}>oldest <b>${age(oldest)}</b></span>` : '') +
       (stale ? `<span class="warn"><b>${stale}</b> waiting over 2 days</span>` : '') +
-      `<span><b>${items.filter(it => it.priority === 'high').length}</b> need attention</span>`;
+      `<span><b>${items.filter(it => prioOf(it) === 'high').length}</b> need attention</span>`;
     document.getElementById('views').innerHTML = VIEWS.map(([v, l]) => {
       const n = all.filter(it => statusOf(it) === v).length;
       return (v === 'trash' && !n && view !== 'trash') ? '' :
@@ -443,8 +446,9 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     counts = {};
     const items = all.filter(it => statusOf(it) === view);
     items.forEach(it => counts[it.source] = (counts[it.source] || 0) + 1);
-    if (source && !counts[source]) source = '';
-    chips.innerHTML = [['', 'All', items.length], ...Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([s,n]) => [s,s,n])]
+    const prio = items.filter(it => prioOf(it) === 'high').length;
+    if (source && (source === '⭐ Priority' ? !prio : !counts[source])) source = '';
+    chips.innerHTML = [['', 'All', items.length], ...(prio ? [['⭐ Priority', '⭐ Priority', prio]] : []), ...Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([s,n]) => [s,s,n])]
       .map(([v,l,n]) => `<button class="chip" data-s="${esc(v)}" aria-pressed="${v === source}">${esc(l)}<span class="n">${n}</span></button>`).join('');
   }
   chips.addEventListener('click', e => { const b = e.target.closest('.chip'); if (!b) return; source = b.dataset.s; drawChips(); draw(); });
@@ -467,7 +471,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   async function decide(it, decision, quiet, extra){
     const before = decided[it.id];
-    decided[it.id] = {decision, at: new Date().toISOString(), ...(before && before.project ? {project: before.project} : {}), ...(extra || {})};
+    decided[it.id] = {decision, at: new Date().toISOString(), ...(before && before.project ? {project: before.project} : {}),
+                      ...(before && before.priority !== undefined ? {priority: before.priority} : {}), ...(extra || {})};
     render();
     try {
       await db.doc('decisions/' + it.id).set(decided[it.id]);
@@ -520,6 +525,14 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     if (ws) { saveWho(ws.dataset.id); return; }
     const ns = e.target.closest('.cat-new-save');
     if (ns) { saveNewCategory(ns.dataset.id); return; }
+    const pr = e.target.closest('.act.prio');
+    if (pr) {
+      const it = all.find(x => x.id === pr.dataset.id); if (!it) return;
+      const was = prioOf(it), now = was === 'high' ? '' : 'high';
+      await decide(it, statusOf(it), true, {priority: now});
+      say(now ? `⭐ Priority: ${it.title}` : `Not a priority any more: ${it.title}`, () => decide(it, statusOf(it), true, {priority: was}));
+      return;
+    }
     const b = e.target.closest('.act'); if (!b || !b.dataset.d) return;
     const it = all.find(x => x.id === b.dataset.id); if (it) decide(it, b.dataset.d);
   });
@@ -556,8 +569,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const links = [it.gmail && it.gmail !== it.url ? `<a href="${esc(it.gmail)}" target="_blank" rel="noopener">✉ Gmail</a>` : '',
                    it.body ? `<button class="readbtn" data-id="${esc(it.id)}" aria-expanded="${reading === it.id}">📖 ${reading === it.id ? 'Close' : 'Read'}</button>` : ''].filter(Boolean).join('');
     const meta = [it.who, it.source].filter(Boolean).map(esc).join(' · ') + (links ? `<span class="links">${links}</span>` : '');
-    const tags = [...(it.priority === 'high' ? ['<span class="tag p-high">high</span>'] : []),
-                  ...(it.priority === 'low' ? ['<span class="tag">low</span>'] : []),
+    const tags = [...(prioOf(it) === 'high' ? ['<span class="tag p-high">⭐ priority</span>'] : []),
+                  ...(prioOf(it) === 'low' ? ['<span class="tag">low</span>'] : []),
                   ...(statusOf(it) === 'waiting' ? [`<span class="tag">🕓 ${waitOf(it) ? 'waiting on ' + esc(waitOf(it)) : 'waiting'} · ${waitingAge(it)}</span>`] : []),
                   ...(catOf(it) && statusOf(it) === 'reference' ? [`<span class="tag">🗄 ${esc(catOf(it))}</span>`] : []),
                   ...it.tags.map(t => `<span class="tag">${esc(t)}</span>`)].join('');
@@ -580,7 +593,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const st = statusOf(it);
     const acts = it.pending ? '<div class="acts"><span class="ro">Saved — syncs at the next refresh</span></div>' : db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox') && (d !== 'done' || st === 'next' || st === 'waiting'))
       .map(d => d === 'reference' ? `<button class="act reference to-cat" data-id="${esc(it.id)}">${ACTIONS[d]} ▾</button>`
-                                  : `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}${st === 'reference' ? `<button class="act to-cat" data-id="${esc(it.id)}">🏷 Category ▾</button>` : ''}${st === 'waiting' ? `<button class="act to-who" data-id="${esc(it.id)}">👤 ${waitOf(it) ? 'Change who' : 'Who?'}</button>` : ''}${st !== 'trash' ? `<button class="act to-proj" data-id="${esc(it.id)}">📁 Project</button>` : ''}</div>` +
+                                  : `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}${st === 'reference' ? `<button class="act to-cat" data-id="${esc(it.id)}">🏷 Category ▾</button>` : ''}${st === 'waiting' ? `<button class="act to-who" data-id="${esc(it.id)}">👤 ${waitOf(it) ? 'Change who' : 'Who?'}</button>` : ''}${st !== 'trash' ? `<button class="act to-proj" data-id="${esc(it.id)}">📁 Project</button>` : ''}${st !== 'trash' ? `<button class="act prio${prioOf(it) === 'high' ? ' on' : ''}" data-id="${esc(it.id)}" aria-pressed="${prioOf(it) === 'high'}">${prioOf(it) === 'high' ? '★ Priority' : '☆ Priority'}</button>` : ''}</div>` +
       (filing === it.id ? `<div class="pick"><select data-id="${esc(it.id)}" class="cat-pick"><option value="">Archive under…</option>
         ${allCategories().map(c => `<option value="${esc(c)}"${c === catOf(it) ? ' selected' : ''}>${esc(c)}</option>`).join('')}
         <option value="__none">No category</option><option value="__new">➕ New category…</option></select><button class="act pick-cancel">Cancel</button></div>` : '') +
@@ -592,7 +605,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
         ${activeProjects().map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
         <option value="__new">➕ New project from this…</option></select><button class="act pick-cancel">Cancel</button></div>` : '') : '';
     const title = c && c.summary ? (it.url ? `<a class="t" href="${esc(it.url)}" target="_blank" rel="noopener">${esc(c.summary)}</a>` : `<span class="t">${esc(c.summary)}</span>`) : titleHtml;
-    return `<article class="it ${esc(it.priority)}"><div class="ic" aria-hidden="true">${esc(it.icon)}</div>
+    return `<article class="it ${esc(prioOf(it))}"><div class="ic" aria-hidden="true">${esc(it.icon)}</div>
       <div class="main">${title}${meta ? `<div class="meta">${meta}</div>` : ''}
         ${it.note ? `<div class="note">${esc(it.note)}</div>` : ''}
         ${reading === it.id ? `<div class="body">${esc(it.body)}</div>` : it.snippet ? `<div class="snip">${esc(it.snippet)}</div>` : ''}${cal}
@@ -606,7 +619,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   function draw(){
     document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.g === group)));
     const items = all.filter(it => statusOf(it) === view);
-    const shown = items.filter(it => (!source || it.source === source) &&
+    const shown = items.filter(it => (!source || (source === '⭐ Priority' ? prioOf(it) === 'high' : it.source === source)) &&
       (!q || [it.title, it.who, it.note, it.snippet, it.tags.join(' '), it.source].join(' ').toLowerCase().includes(q)));
     const out = document.getElementById('out');
     const addbox = '';
@@ -1114,7 +1127,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   function drawSomeday(){
     const keepS = drawListChips('schips', all.filter(it => statusOf(it) === 'someday'));
-    const items = all.filter(it => statusOf(it) === 'someday' && keepS(it));
+    const items = all.filter(it => statusOf(it) === 'someday' && keepS(it)).sort(byPrio);
     document.getElementById('ssum').innerHTML = `<span><b>${items.length}</b> idea${items.length === 1 ? '' : 's'}</span>` +
       '<span>Things you might do one day, but not now. Look through it weekly.</span>';
     const addbox = db ? `<div class="addbox"><input id="someday-new" placeholder="Something you might want to do one day…" aria-label="New someday / maybe idea" value="${esc(somedayDraft)}"><button class="primary" id="someday-add">Add</button></div>` : '';
@@ -1126,17 +1139,19 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
 
   let nextDraft = '';
   // source chips on the Next actions / Waiting for / Someday lists (same idea as the In-tray's)
-  const PROJ_SRC = '🎯 Projects', listSource = {nchips: '', wchips: '', schips: ''};
+  const PROJ_SRC = '🎯 Projects', PRIO_SRC = '⭐ Priority', listSource = {nchips: '', wchips: '', schips: ''};
   function drawListChips(id, items, projN = 0){
     const counts = {};
     items.forEach(it => counts[it.source] = (counts[it.source] || 0) + 1);
     if (projN) counts[PROJ_SRC] = projN;
-    if (listSource[id] && !counts[listSource[id]]) listSource[id] = '';
+    const prio = items.filter(it => prioOf(it) === 'high').length;
+    if (listSource[id] && listSource[id] !== PRIO_SRC && !counts[listSource[id]]) listSource[id] = '';
+    if (listSource[id] === PRIO_SRC && !prio) listSource[id] = '';
     const total = items.length + projN, cur = listSource[id];
-    document.getElementById(id).innerHTML = Object.keys(counts).length < 2 ? '' :
-      [['', 'All', total], ...Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => [k, k, n])]
+    document.getElementById(id).innerHTML = Object.keys(counts).length < 2 && !prio ? '' :
+      [['', 'All', total], ...(prio ? [[PRIO_SRC, PRIO_SRC, prio]] : []), ...Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => [k, k, n])]
         .map(([v, l, n]) => `<button class="chip" data-s="${esc(v)}" aria-pressed="${v === cur}">${esc(l)}<span class="n">${n}</span></button>`).join('');
-    return it => !cur || it.source === cur;
+    return it => !cur || (cur === PRIO_SRC ? prioOf(it) === 'high' : it.source === cur);
   }
   for (const id of Object.keys(listSource)) document.getElementById(id).addEventListener('click', e => {
     const b = e.target.closest('.chip'); if (!b) return; listSource[id] = b.dataset.s; render();
@@ -1149,6 +1164,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const src = listSource.nchips;
     const items = src === PROJ_SRC ? [] : all.filter(it => statusOf(it) === 'next' && keep(it));
     const withNext = !src || src === PROJ_SRC ? withNextAll : [];
+    items.sort(byPrio);
     const over = withNext.filter(p => whenLabel(p.next.when)[1] === 'over').length;
     document.getElementById('nsum').innerHTML = `<span><b>${items.length + withNext.length}</b> next action${items.length + withNext.length === 1 ? '' : 's'}</span>` +
       (over ? `<span class="warn"><b>${over}</b> overdue</span>` : '') + '<span>The very next physical step for each thing you’ve committed to.</span>';
