@@ -124,7 +124,7 @@ def to_decisions(snapshot: dict, applied: set[str]) -> tuple[dict, list[str]]:
         key = f"adds/{doc_id}"
         if not v.get("text") or key in applied:
             continue
-        adds.append({k: v[k] for k in ("text", "status", "waiting_on", "at") if k in v})
+        adds.append({k: v[k] for k in ("text", "status", "waiting_on", "project", "category", "priority", "at") if k in v})
         keys.append(key)
     if adds:
         decisions["_adds"] = adds

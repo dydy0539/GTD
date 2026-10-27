@@ -129,4 +129,7 @@ def _add(store: Store, new: dict) -> list[str]:
         item.status = status
         store.save(item)
     store.log("decided", item.id, decision=status, previous="new", **({"at": new["at"]} if new.get("at") else {}))
+    more = {k: new[k] for k in ("project", "category", "priority") if new.get(k)}  # set on the page before it synced
+    if created and more:
+        apply(store, [{"id": item.id, "decision": status, **more}])
     return [f"  ✓ {DECISIONS[status]:<20} {item.title}"[:120]] if created else []

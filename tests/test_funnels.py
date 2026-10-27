@@ -1058,3 +1058,21 @@ class PriorityFlagTest(unittest.TestCase):
             self.assertEqual((got.status, got.extra["hints"]["priority"]), ("next", "high"))
             apply(store, {a.id: {"decision": "next", "priority": "", "at": "t2"}})       # starred off again
             self.assertNotIn("priority", store.get(a.id).extra.get("hints", {}))
+
+
+class TypedOnPageTest(unittest.TestCase):
+    def test_choices_made_before_the_sync_are_kept(self):
+        from gtd import drive
+        from gtd.decide import apply
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            snap = {"adds": {"x1": {"text": "Anthropic S-1", "status": "next", "priority": "high", "project": "Research AI", "at": "t1"},
+                             "x2": {"text": "Old idea", "status": "reference", "category": "Ideas", "at": "t1"}}}
+            decisions, keys = drive.to_decisions(snap, set())
+            apply(store, decisions)
+            got = {i.title: i for i in store.items(status=None)}
+            s1 = got["Anthropic S-1"]
+            self.assertEqual((s1.status, s1.extra["hints"]["priority"]), ("next", "high"))
+            self.assertIn("project:research-ai", s1.tags)
+            self.assertEqual((got["Old idea"].status, got["Old idea"].extra["category"]), ("reference", "Ideas"))
+            self.assertEqual(sorted(keys), ["adds/x1", "adds/x2"])

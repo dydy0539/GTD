@@ -470,6 +470,15 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   document.getElementById('undo').addEventListener('click', () => { const u = undo; toast.hidden = true; undo = null; if (u) u(); });
 
   async function decide(it, decision, quiet, extra){
+    if (it.pending) {  // typed on the page, not synced yet: change what will be created
+      const cur = addDocs.find(([id]) => 'add:' + id === it.id); if (!cur) return;
+      const ref = db.doc('adds/' + cur[0]), before = {...cur[1]};
+      try { await ref.set({...before, status: decision, ...(extra || {})}); }
+      catch (e) { say('Couldn’t save that. Try again.'); return; }
+      if (!quiet) say(extra && extra.project ? `Filed under ${extra.project}: ${it.title}` : extra && extra.category ? `Archived in ${extra.category}: ${it.title}` : `${DONE[decision]}: ${it.title}`,
+                      () => ref.set(before));
+      return;
+    }
     const before = decided[it.id];
     decided[it.id] = {decision, at: new Date().toISOString(), ...(before && before.project ? {project: before.project} : {}),
                       ...(before && before.priority !== undefined ? {priority: before.priority} : {}), ...(extra || {})};
@@ -552,8 +561,8 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   function injectAdds(){
       for (let i = all.length - 1; i >= 0; i--) if (all[i].pending) all.splice(i, 1);
       addDocs.forEach(([id, v]) => { if (v && v.text) all.unshift({id: 'add:' + id, status: v.status || 'someday', pending: true,
-        title: v.text, icon: v.status === 'next' ? '✅' : v.status === 'waiting' ? '🕓' : '💭', waiting_on: v.waiting_on || '', waiting_since: v.at || '', channel: 'text', via: 'page', source: 'In-tray page', url: '', at: v.at || new Date().toISOString(),
-        who: '', note: '', snippet: '', tags: [], priority: '', calendar: null}); });
+        title: v.text, icon: v.status === 'next' ? '✅' : v.status === 'waiting' ? '🕓' : '💭', waiting_on: v.waiting_on || '', category: v.category || '', waiting_since: v.at || '', channel: 'text', via: 'page', source: 'In-tray page', url: '', at: v.at || new Date().toISOString(),
+        who: '', note: '', snippet: '', tags: v.project ? [slug(v.project)] : [], priority: v.priority || '', calendar: null}); });
   }
   if (db) {
     db.collection('edits').onSnapshot(snap => {
@@ -591,7 +600,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
         <div class="btns"><button class="act save cal-save" data-id="${esc(it.id)}">Save</button><button class="act cal-cancel">Cancel</button></div></div>`;
     }
     const st = statusOf(it);
-    const acts = it.pending ? '<div class="acts"><span class="ro">Saved — syncs at the next refresh</span></div>' : db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox') && (d !== 'done' || st === 'next' || st === 'waiting'))
+    const acts = db ? `<div class="acts">${Object.keys(ACTIONS).filter(d => d !== st && !(st === 'trash' && d !== 'inbox') && (d !== 'done' || st === 'next' || st === 'waiting'))
       .map(d => d === 'reference' ? `<button class="act reference to-cat" data-id="${esc(it.id)}">${ACTIONS[d]} ▾</button>`
                                   : `<button class="act ${d}" data-id="${esc(it.id)}" data-d="${d}">${ACTIONS[d]}</button>`).join('')}${st === 'reference' ? `<button class="act to-cat" data-id="${esc(it.id)}">🏷 Category ▾</button>` : ''}${st === 'waiting' ? `<button class="act to-who" data-id="${esc(it.id)}">👤 ${waitOf(it) ? 'Change who' : 'Who?'}</button>` : ''}${st !== 'trash' ? `<button class="act to-proj" data-id="${esc(it.id)}">📁 Project</button>` : ''}${st !== 'trash' ? `<button class="act prio${prioOf(it) === 'high' ? ' on' : ''}" data-id="${esc(it.id)}" aria-pressed="${prioOf(it) === 'high'}">${prioOf(it) === 'high' ? '★ Priority' : '☆ Priority'}</button>` : ''}</div>` +
       (filing === it.id ? `<div class="pick"><select data-id="${esc(it.id)}" class="cat-pick"><option value="">Archive under…</option>
@@ -683,7 +692,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
   const linkedNext = p => all.filter(it => statusOf(it) === 'next' && projectOf(it) === p.name);
   function linkedBlock(p){
     const l = linkedNext(p); if (!l.length) return '';
-    return `<div class="nlinked">${l.map(it => `<div class="nl"><span>☐ ${esc(it.title)}</span>${db && !it.pending ? `<button class="act done" data-id="${esc(it.id)}" data-d="done">✓ Done</button>` : ''}</div>`).join('')}</div>`;
+    return `<div class="nlinked">${l.map(it => `<div class="nl"><span>☐ ${esc(it.title)}</span>${db ? `<button class="act done" data-id="${esc(it.id)}" data-d="done">✓ Done</button>` : ''}</div>`).join('')}</div>`;
   }
   function nextBlock(p){
     return nextMain(p) + linkedBlock(p);
@@ -1071,6 +1080,7 @@ a.t:hover{text-decoration:underline;text-decoration-color:var(--faint)}
     const box = document.querySelector(`.who-new[data-id="${CSS.escape(id)}"]`);
     const who = (box && box.value || '').trim(); const it = all.find(x => x.id === id); whoFor = '';
     if (!it) return;
+    if (it.pending) { decide(it, 'waiting', true, {waiting_on: who}).then(() => say(who ? 'Waiting on ' + who : 'Cleared who')); return; }
     const cur = decided[id] || {};
     const entry = {...cur, decision: cur.decision || 'waiting', at: cur.at || new Date().toISOString(), waiting_on: who};
     decided[id] = entry; render();
